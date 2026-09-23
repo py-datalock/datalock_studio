@@ -16,6 +16,12 @@
 
 const STROKE = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
 
+// Dentes da engrenagem gerados em código (em vez de 8 linhas manuais
+// repetidas) — reduz a chance de erro de digitação num SVG longo.
+const _gearTeeth = Array.from({ length: 8 }, (_, i) =>
+  `<rect x="11" y="1" width="2" height="3.4" rx="0.6" fill="currentColor" transform="rotate(${i * 45} 12 12)"/>`
+).join("");
+
 const PATHS = {
   // ── Arquivo / navegação ─────────────────────────────────────────────
   folder: `<path ${STROKE} d="M3 6.5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>`,
@@ -65,6 +71,12 @@ const PATHS = {
   "refresh-cw": `<path ${STROKE} d="M4 11a8 8 0 0 1 14-4.5M20 6v5h-5"/><path ${STROKE} d="M20 13a8 8 0 0 1-14 4.5M4 18v-5h5"/>`,
   history: `<path ${STROKE} d="M4 12a8 8 0 1 0 2.5-5.8"/><path ${STROKE} d="M4 4v4h4"/><path ${STROKE} d="M12 8v4l3 2"/>`,
   "arrow-right": `<path ${STROKE} d="M5 12h14M13 6l6 6-6 6"/>`,
+  "arrow-left": `<path ${STROKE} d="M19 12H5M11 6l-6 6 6 6"/>`,
+  settings: `<circle ${STROKE} cx="12" cy="12" r="3.2"/><circle ${STROKE} cx="12" cy="12" r="7.2"/>${_gearTeeth}`,
+  "help-circle": `<circle ${STROKE} cx="12" cy="12" r="8.5"/><path ${STROKE} d="M9.2 9.3a2.8 2.8 0 1 1 3.9 2.6c-.8.4-1.1.9-1.1 1.7"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>`,
+  palette: `<path ${STROKE} d="M12 3.5a8.5 8.5 0 1 0 0 17c1 0 1.5-.6 1.5-1.4 0-.4-.15-.7-.4-1-.25-.3-.4-.6-.4-1 0-.8.6-1.4 1.4-1.4h1.6a3.3 3.3 0 0 0 3.3-3.3C19 6.9 16 3.5 12 3.5z"/><circle cx="7.5" cy="10.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="9.5" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="16.5" cy="10.5" r="1.1" fill="currentColor" stroke="none"/>`,
+  layout: `<rect ${STROKE} x="3.5" y="4" width="17" height="16" rx="1.5"/><path ${STROKE} d="M14.5 4v16"/>`,
+  sparkles: `<path ${STROKE} d="M11 3l1.2 3.8L16 8l-3.8 1.2L11 13l-1.2-3.8L6 8l3.8-1.2z"/><path ${STROKE} d="M17.5 14l.7 2.2 2.2.7-2.2.7-.7 2.2-.7-2.2-2.2-.7 2.2-.7z"/>`,
 };
 
 export function icon(name, { size = 18 } = {}) {

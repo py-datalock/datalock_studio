@@ -146,18 +146,32 @@ export function validateSaltStrength(salt) {
       `combinações válidas; GPUs modernas testam bilhões de hashes por segundo.`
     );
   }
-  const weakPatterns = [
-    "test", "teste", "exemplo", "example", "salt", "senha", "password",
-    "chave", "key", "dev", "debug", "123", "abc", "lgpd", "framework",
-    "demo", "local", "staging", "homolog", "producao", "production",
-  ];
-  const lower = (salt || "").toLowerCase();
-  if (weakPatterns.some((p) => lower.includes(p))) {
-    warnings.push("Salt contém uma palavra comum/previsível — prefira gerar um salt aleatório.");
+
+  // Um salt puramente hexadecimal (o formato de generateSalt()/dd.generate_salt())
+  // é, por natureza, alta entropia — mesmo que contenha por coincidência uma
+  // substring como "123"/"abc" ou algo parecido com um ano, isso não indica
+  // nada sobre como o salt foi escolhido (não foi "escolhido", foi sorteado).
+  // As checagens de padrão abaixo existem para pegar salt ESCOLHIDO por uma
+  // pessoa (tipo "minhaSenha123") — aplicá-las a hex aleatório só gera falso
+  // positivo. Ex.: ~19% dos salts de generateSalt() eram sinalizados antes
+  // dessa checagem existir, mesmo sendo criptograficamente excelentes.
+  const isPureHex = /^[0-9a-f]+$/i.test(salt || "") && bytesLength >= 32;
+
+  if (!isPureHex) {
+    const weakPatterns = [
+      "test", "teste", "exemplo", "example", "salt", "senha", "password",
+      "chave", "key", "dev", "debug", "lgpd", "framework",
+      "demo", "local", "staging", "homolog", "producao", "production",
+    ];
+    const lower = (salt || "").toLowerCase();
+    if (weakPatterns.some((p) => lower.includes(p))) {
+      warnings.push("Salt contém uma palavra comum/previsível — prefira gerar um salt aleatório.");
+    }
+    if (/(19|20)\d{2}/.test(salt || "")) {
+      warnings.push("Salt contém um ano — reduz o espaço de busca de um ataque de força bruta.");
+    }
   }
-  if (/(19|20)\d{2}/.test(salt || "")) {
-    warnings.push("Salt contém um ano — reduz o espaço de busca de um ataque de força bruta.");
-  }
+
   const uniqueChars = new Set((salt || "").split("")).size;
   if (uniqueChars < 6) {
     warnings.push("Salt com pouca diversidade de caracteres.");

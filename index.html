@@ -1,8 +1,4 @@
 <!DOCTYPE html>
-<!--
-  datalock Studio — Copyright © 2026 [SEU NOME/EMPRESA]. Todos os direitos
-  reservados. Software proprietário — ver LICENSE na raiz deste repositório.
--->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
@@ -33,6 +29,12 @@
     <div class="topbar-actions">
       <button class="icon-btn theme-toggle" @click="toggleTheme" :title="isDarkNow ? 'Mudar para tema claro' : 'Mudar para tema escuro'">
         <span class="icon" v-html="icon(isDarkNow ? 'sun' : 'moon')"></span>
+      </button>
+      <button class="icon-btn" @click="showSettingsPanel = true" title="Personalizar aparência">
+        <span class="icon" v-html="icon('settings')"></span>
+      </button>
+      <button class="btn ghost" @click="showHelpGuide = true">
+        <span class="icon" v-html="icon('help-circle')"></span> Ajuda
       </button>
       <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
               @click="openJobsPanel">
@@ -96,7 +98,18 @@
               @click="openDbPanel"><span class="icon" v-html="icon('database')"></span> Banco de dados</button>
       <span class="grow"></span>
       <div class="salt-box">
-        <label>Salt</label>
+        <label>
+          Salt
+          <span class="help-hint" tabindex="0">
+            <span class="icon" v-html="icon('help-circle', {size: 13})"></span>
+            <span class="help-tooltip">
+              É a "senha" que torna a anonimização única e reprodutível. O mesmo valor +
+              o mesmo salt sempre vira o mesmo código — troque o salt e todos os
+              códigos mudam. Use pelo menos 16 caracteres aleatórios e guarde em
+              lugar seguro: sem ele, ninguém reverte nem cruza os dados depois.
+            </span>
+          </span>
+        </label>
         <div class="secret-field">
           <input type="text" :class="{ 'secret-mask': !saltVisible }"
                  v-model="salt" placeholder="necessário para mascarar/anonimizar"
@@ -105,6 +118,12 @@
           <button class="icon-btn" type="button" @click="saltVisible = !saltVisible" :title="saltVisible ? 'Ocultar' : 'Mostrar'">
             <span class="icon" v-html="icon(saltVisible ? 'eye-off' : 'eye', {size: 15})"></span>
           </button>
+        </div>
+        <div class="salt-strength" v-if="saltStrength" :title="saltStrength.detail">
+          <div class="salt-strength-bar" :class="saltStrength.level">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="salt-strength-label">{{ saltStrength.label }}</span>
         </div>
         <button class="btn tiny" @click="generateSalt" title="Gerar salt aleatório forte">
           <span class="icon" v-html="icon('repeat', {size: 14})"></span>
@@ -430,7 +449,20 @@
             <span v-if="activeTab.piiReport[col]" class="pii-chip" :class="activeTab.piiReport[col].risk">{{ activeTab.piiReport[col].label }}</span>
           </label>
         </div>
-        <label>Método</label>
+        <label>
+          Método
+          <span class="help-hint" tabindex="0">
+            <span class="icon" v-html="icon('help-circle', {size: 13})"></span>
+            <span class="help-tooltip">
+              <strong>Hash</strong>: vira um código sem volta — uma vez aplicado,
+              ninguém recupera o valor original, nem você (isso é o que a
+              lei considera "anonimizado"). <strong>Criptografia reversível</strong>:
+              vira um código diferente, mas quem tiver o mesmo salt pode
+              reverter depois (dado continua sendo "pessoal" para efeitos legais,
+              só que protegido).
+            </span>
+          </span>
+        </label>
         <select v-model="draftStep.strategy">
           <option value="hash">Hash irreversível (recomendado p/ anonimizar — determinístico, permite join)</option>
           <option value="redact">Substituir por "REDACTED"</option>
@@ -622,7 +654,18 @@
   <div v-if="showExportPanel && activeTab" class="modal-backdrop" @click.self="showExportPanel = false">
     <div class="modal">
       <h2><span class="icon" v-html="icon('download')"></span> Exportar resultado</h2>
-      <label>Formato</label>
+      <label>
+        Formato
+        <span class="help-hint" tabindex="0">
+          <span class="icon" v-html="icon('help-circle', {size: 13})"></span>
+          <span class="help-tooltip">
+            <strong>.dlk</strong> é o formato próprio do datalock: um arquivo só,
+            que pode guardar uma ou várias tabelas juntas, opcionalmente
+            criptografado — como um Parquet "melhorado". "Sem criptografia" é só
+            para dados que já não têm nada sensível.
+          </span>
+        </span>
+      </label>
       <select v-model="exportFormat">
         <option value="csv">CSV</option>
         <option value="xlsx">Excel (.xlsx)</option>
@@ -634,7 +677,18 @@
       <label>Nome do arquivo</label>
       <input type="text" v-model="exportFilename" />
       <div v-if="exportFormat === 'dlk_encrypted'" class="field-block nested">
-        <label>Chave de criptografia (key)</label>
+        <label>
+          Chave de criptografia (key)
+          <span class="help-hint" tabindex="0">
+            <span class="icon" v-html="icon('help-circle', {size: 13})"></span>
+            <span class="help-tooltip">
+              Diferente do salt: o salt protege os <em>valores</em> dentro da
+              tabela; a key criptografa o <em>arquivo inteiro</em> — sem ela,
+              ninguém abre o .dlk, nem para ver os nomes das colunas. Guarde-a
+              separada do salt, e nunca dentro do mesmo arquivo/mensagem.
+            </span>
+          </span>
+        </label>
         <div class="secret-field">
           <input type="text" :class="{ 'secret-mask': !dlkKeyVisible }" v-model="dlkKey"
                  placeholder="obrigatória para .dlk criptografado"
@@ -643,6 +697,12 @@
           <button class="icon-btn" type="button" @click="dlkKeyVisible = !dlkKeyVisible" :title="dlkKeyVisible ? 'Ocultar' : 'Mostrar'">
             <span class="icon" v-html="icon(dlkKeyVisible ? 'eye-off' : 'eye', {size: 15})"></span>
           </button>
+        </div>
+        <div class="salt-strength" v-if="dlkKeyStrength" :title="dlkKeyStrength.detail">
+          <div class="salt-strength-bar" :class="dlkKeyStrength.level">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="salt-strength-label">{{ dlkKeyStrength.label }}</span>
         </div>
       </div>
       <div class="modal-actions">
@@ -839,6 +899,144 @@
         </div>
       </div>
       <div class="modal-actions"><button class="btn primary" @click="closeJobRuns">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Personalização ══════════════════ -->
+  <div v-if="showSettingsPanel" class="modal-backdrop" @click.self="showSettingsPanel = false">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('palette')"></span> Personalizar aparência</h2>
+
+      <div class="field-block">
+        <label>Cor de destaque</label>
+        <div class="swatch-row">
+          <button v-for="opt in accentColorOptions" :key="opt.id" class="swatch"
+                  :class="{ selected: accentColor === opt.id }" :style="{ background: opt.hex }"
+                  :title="opt.label" @click="setAccentColor(opt.id)">
+            <span v-if="accentColor === opt.id" class="icon" v-html="icon('check', {size: 14})"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="field-block">
+        <label>Densidade</label>
+        <div class="option-row">
+          <div class="option-card" :class="{ selected: density === 'comfortable' }" @click="setDensity('comfortable')">
+            <div class="icon" v-html="icon('layout', {size: 18})"></div>
+            Confortável
+          </div>
+          <div class="option-card" :class="{ selected: density === 'compact' }" @click="setDensity('compact')">
+            <div class="icon" v-html="icon('layout', {size: 18})"></div>
+            Compacta
+          </div>
+        </div>
+      </div>
+
+      <div class="field-block">
+        <label>Painel de passos</label>
+        <div class="option-row">
+          <div class="option-card" :class="{ selected: stepsPosition === 'right' }" @click="setStepsPosition('right')">
+            <div class="icon" v-html="icon('arrow-right', {size: 18})"></div>
+            À direita
+          </div>
+          <div class="option-card" :class="{ selected: stepsPosition === 'left' }" @click="setStepsPosition('left')">
+            <div class="icon" v-html="icon('arrow-left', {size: 18})"></div>
+            À esquerda
+          </div>
+        </div>
+      </div>
+
+      <p class="muted" style="font-size: 11px;">As preferências ficam salvas neste navegador/computador.</p>
+      <div class="modal-actions"><button class="btn primary" @click="showSettingsPanel = false">Concluído</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ ONBOARDING (primeira abertura) ══════════════════ -->
+  <div v-if="showOnboarding" class="onboarding-backdrop">
+    <div class="onboarding-card">
+      <div class="onboarding-icon">
+        <span class="icon" v-html="icon(onboardingSlides[onboardingStep].icon, {size: 28})"></span>
+      </div>
+      <h2>{{ onboardingSlides[onboardingStep].title }}</h2>
+      <p>{{ onboardingSlides[onboardingStep].text }}</p>
+      <div class="onboarding-dots">
+        <span v-for="(s, i) in onboardingSlides" :key="i" :class="{ active: i === onboardingStep }"></span>
+      </div>
+      <div class="onboarding-actions">
+        <button class="btn ghost" @click="finishOnboarding">Pular</button>
+        <div style="display:flex; gap:8px;">
+          <button v-if="onboardingStep > 0" class="btn ghost" @click="prevOnboarding">Voltar</button>
+          <button class="btn primary" @click="nextOnboarding">
+            {{ onboardingStep === onboardingSlides.length - 1 ? 'Começar' : 'Próximo' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ GUIA DE AJUDA ══════════════════ -->
+  <div v-if="showHelpGuide" class="modal-backdrop" @click.self="showHelpGuide = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('help-circle')"></span> Guia rápido</h2>
+
+      <p class="muted">
+        <button class="btn tiny ghost" @click="showHelpGuide = false; startOnboarding()">
+          <span class="icon" v-html="icon('sparkles', {size: 12})"></span> Rever a introdução passo a passo
+        </button>
+      </p>
+
+      <h3 style="font-size: 13px; margin-bottom: 4px;">Passos (a "receita")</h3>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        Cada ação (filtrar, ordenar, mascarar...) é um "passo". A lista de passos
+        aplicados fica registrada e pode ser salva como uma receita — um arquivo
+        `.json` que reaplica a mesma sequência em outro arquivo depois, sem
+        refazer nada na mão.
+      </p>
+
+      <h3 style="font-size: 13px; margin-bottom: 4px;">Salt</h3>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        A "senha" da anonimização. O mesmo valor de entrada + o mesmo salt sempre
+        gera o mesmo código — é isso que permite cruzar duas tabelas mascaradas
+        separadamente (mesmo CPF em ambas vira o mesmo código). Trocar o salt
+        muda todos os códigos. Use pelo menos 16 caracteres aleatórios (o botão
+        de dado ao lado do campo gera um automaticamente) e guarde em lugar seguro.
+      </p>
+
+      <h3 style="font-size: 13px; margin-bottom: 4px;">Chave de criptografia (key)</h3>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        Diferente do salt. O salt protege os valores dentro da tabela; a key
+        criptografa o arquivo `.dlk` inteiro — sem ela, o arquivo não abre de
+        jeito nenhum, nem para ver os nomes das colunas. São dois segredos
+        independentes: perder um não compromete o outro.
+      </p>
+
+      <h3 style="font-size: 13px; margin-bottom: 4px;">Hash × Criptografia reversível</h3>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        <strong>Hash</strong> não tem volta — é isso que a lei chama de dado
+        "anonimizado" (deixa de ser considerado dado pessoal).
+        <strong>Criptografia reversível</strong> pode ser desfeita por quem tem
+        o salt certo — é "pseudonimização": mais seguro que o valor original,
+        mas ainda é dado pessoal para efeitos legais. Use hash quando não
+        precisar mais do valor original; use a reversível só quando alguém
+        autorizado for precisar recuperá-lo depois.
+      </p>
+
+      <h3 style="font-size: 13px; margin-bottom: 4px;">O formato .dlk</h3>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        Um arquivo próprio do datalock Studio — pense nele como "um Parquet
+        melhorado". Guarda uma ou várias tabelas dentro de um único arquivo,
+        com ou sem criptografia. Útil para mandar várias planilhas relacionadas
+        de uma vez, ou para arquivar um resultado sensível protegido por senha.
+      </p>
+
+      <h3 style="font-size: 13px; margin-bottom: 4px;">Abas</h3>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        Cada tabela aberta (um arquivo, uma planilha de um Excel com várias,
+        uma tabela de banco) vira uma aba própria, com sua própria lista de
+        passos — como abrir várias planilhas ao mesmo tempo.
+      </p>
+
+      <div class="modal-actions"><button class="btn primary" @click="showHelpGuide = false">Fechar</button></div>
     </div>
   </div>
 

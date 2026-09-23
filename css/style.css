@@ -26,9 +26,10 @@
   --text-muted:    #6B7280;
   --text-faint:    #9AA1AC;
 
-  --accent:        #4F46E5;
-  --accent-hover:  #4338CA;
-  --accent-soft:   #EEEDFD;
+  --accent-base:   #4F46E5;
+  --accent:        var(--accent-base);
+  --accent-hover:  color-mix(in srgb, var(--accent) 82%, black);
+  --accent-soft:   color-mix(in srgb, var(--accent) 12%, var(--surface));
   --accent-text:   #FFFFFF;
 
   --success:       #15803D;
@@ -69,9 +70,9 @@
     --text-muted:    #9199A6;
     --text-faint:    #626A78;
 
-    --accent:        #7C79F5;
-    --accent-hover:  #918EFF;
-    --accent-soft:   #201F3B;
+    --accent:        color-mix(in srgb, var(--accent-base) 72%, white);
+    --accent-hover:  color-mix(in srgb, var(--accent) 88%, white);
+    --accent-soft:   color-mix(in srgb, var(--accent) 16%, var(--surface));
     --accent-text:   #0C0E12;
 
     --success:       #3BB273;
@@ -103,9 +104,9 @@
   --text-muted:    #9199A6;
   --text-faint:    #626A78;
 
-  --accent:        #7C79F5;
-  --accent-hover:  #918EFF;
-  --accent-soft:   #201F3B;
+  --accent:        color-mix(in srgb, var(--accent-base) 72%, white);
+  --accent-hover:  color-mix(in srgb, var(--accent) 88%, white);
+  --accent-soft:   color-mix(in srgb, var(--accent) 16%, var(--surface));
   --accent-text:   #0C0E12;
 
   --success:       #3BB273;
@@ -121,6 +122,32 @@
   --shadow-md:  0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-lg:  0 20px 56px rgba(0, 0, 0, 0.55);
 }
+
+/* ── Personalização: cor de acento, densidade, posição do painel ────────── */
+/* Cada preset só define a cor-base — hover/soft continuam derivados via
+   color-mix() nos blocos acima, então funcionam automaticamente nos dois
+   temas sem precisar duplicar regras por tema. */
+:root[data-accent="indigo"] { --accent-base: #4F46E5; }
+:root[data-accent="blue"]   { --accent-base: #2563EB; }
+:root[data-accent="teal"]   { --accent-base: #0D9488; }
+:root[data-accent="green"]  { --accent-base: #15803D; }
+:root[data-accent="rose"]   { --accent-base: #DB2777; }
+:root[data-accent="violet"] { --accent-base: #7C3AED; }
+
+/* Densidade compacta — reduz o espaçamento nos lugares de maior impacto
+   visual (grade de dados, cards de passo, barra de ferramentas) sem
+   redesenhar cada componente individualmente. */
+[data-density="compact"] table.data-grid td { padding: 3px 10px; }
+[data-density="compact"] table.data-grid th { padding: 5px 10px; }
+[data-density="compact"] .step-card { padding: 6px 8px; }
+[data-density="compact"] .steps-list { gap: 3px; }
+[data-density="compact"] .toolbar { padding: 5px 14px; }
+[data-density="compact"] .tab { padding: 5px 8px 5px 10px; }
+[data-density="compact"] .checkbox-row { padding: 1px 0; }
+
+/* Layout — painel de passos à esquerda em vez de à direita */
+[data-steps-position="left"] .main-grid { flex-direction: row-reverse; }
+[data-steps-position="left"] .steps-panel { border-left: none; border-right: 1px solid var(--border); }
 
 /* ── Reset / base ───────────────────────────────────────────────────────── */
 * { box-sizing: border-box; }
@@ -425,6 +452,33 @@ table.data-grid tbody tr:hover { background: var(--surface-sunken); }
 
 .warn-text { color: var(--warn); font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
 
+/* ── Dica de ajuda inline ("?") — CSS puro, sem JS ───────────────────────── */
+.help-hint { position: relative; display: inline-flex; color: var(--text-faint); cursor: help; vertical-align: middle; }
+.help-hint:hover, .help-hint:focus-visible { color: var(--accent); }
+.help-tooltip {
+  position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%) translateY(4px);
+  width: 230px; background: var(--surface-raised); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 9px 11px; font-size: 11.5px; font-weight: 400; line-height: 1.5;
+  box-shadow: var(--shadow-md); opacity: 0; pointer-events: none; transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 60; text-align: left; white-space: normal;
+}
+.help-hint:hover .help-tooltip, .help-hint:focus-visible .help-tooltip {
+  opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto;
+}
+.help-tooltip::after {
+  content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: var(--border);
+}
+
+/* ── Força do salt ─────────────────────────────────────────────────────── */
+.salt-strength { display: flex; align-items: center; gap: 5px; }
+.salt-strength-bar { display: flex; gap: 2px; width: 30px; }
+.salt-strength-bar span { height: 4px; flex: 1; border-radius: 2px; background: var(--border); }
+.salt-strength-bar.weak span:nth-child(1) { background: var(--danger); }
+.salt-strength-bar.medium span:nth-child(1), .salt-strength-bar.medium span:nth-child(2) { background: var(--warn); }
+.salt-strength-bar.strong span { background: var(--success); }
+.salt-strength-label { font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+
 .pii-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
 .pii-table th, .pii-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .pii-table td:first-child { font-family: var(--font-mono); }
@@ -434,3 +488,41 @@ table.data-grid tbody tr:hover { background: var(--surface-sunken); }
   .steps-panel { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
   .drawer { width: 100%; max-width: 100%; }
 }
+
+/* ── Personalização (painel de configurações) ────────────────────────────── */
+.swatch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch {
+  width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: white; transition: transform 0.1s ease, border-color 0.1s ease;
+}
+.swatch:hover { transform: scale(1.08); }
+.swatch.selected { border-color: var(--text); }
+.option-row { display: flex; gap: 8px; }
+.option-card {
+  flex: 1; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; cursor: pointer;
+  background: var(--surface); text-align: center; font-size: 12px; transition: border-color 0.1s ease, background 0.1s ease;
+}
+.option-card:hover { background: var(--surface-sunken); }
+.option-card.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.option-card .icon { display: flex; justify-content: center; margin-bottom: 4px; }
+
+/* ── Onboarding (primeira abertura) ──────────────────────────────────────── */
+.onboarding-backdrop {
+  position: fixed; inset: 0; background: rgba(8, 10, 14, 0.6); z-index: 80;
+  display: flex; align-items: center; justify-content: center; padding: 20px; animation: dl-fade-in 0.2s ease;
+}
+.onboarding-card {
+  background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  width: 460px; max-width: 100%; padding: 32px 28px 24px; text-align: center;
+  animation: dl-pop-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.onboarding-icon {
+  width: 64px; height: 64px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 18px;
+}
+.onboarding-card h2 { margin: 0 0 10px; font-size: 17px; }
+.onboarding-card p { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.onboarding-dots { display: flex; justify-content: center; gap: 6px; margin: 22px 0 20px; }
+.onboarding-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--border); transition: background 0.15s ease, transform 0.15s ease; }
+.onboarding-dots span.active { background: var(--accent); transform: scale(1.3); }
+.onboarding-actions { display: flex; justify-content: space-between; align-items: center; }

@@ -1,10 +1,6 @@
 /**
  * app.js
  * ======
- * datalock Studio — Copyright © 2026 [SEU NOME/EMPRESA]. Todos os
- * direitos reservados. Software proprietário — ver LICENSE na raiz
- * deste repositório.
- *
  * Aplicação Vue 3 (sem build step — Vue global via CDN) que liga a UI
  * definida em index.html ao motor de dados (engine.js).
  *
@@ -98,12 +94,98 @@ createApp({
     });
     applyTheme();
 
+    // ── Personalização (cor de acento, densidade, layout) ────────────────
+    const ACCENT_OPTIONS = [
+      { id: "indigo", label: "Índigo", hex: "#4F46E5" },
+      { id: "blue", label: "Azul", hex: "#2563EB" },
+      { id: "teal", label: "Teal", hex: "#0D9488" },
+      { id: "green", label: "Verde", hex: "#15803D" },
+      { id: "rose", label: "Rosa", hex: "#DB2777" },
+      { id: "violet", label: "Violeta", hex: "#7C3AED" },
+    ];
+    const accentColor = ref(localStorage.getItem("dl_accent") || "indigo");
+    const density = ref(localStorage.getItem("dl_density") || "comfortable");
+    const stepsPosition = ref(localStorage.getItem("dl_steps_position") || "right");
+    const showSettingsPanel = ref(false);
+
+    function applyCustomization() {
+      document.documentElement.setAttribute("data-accent", accentColor.value);
+      if (density.value === "compact") document.documentElement.setAttribute("data-density", "compact");
+      else document.documentElement.removeAttribute("data-density");
+      document.documentElement.setAttribute("data-steps-position", stepsPosition.value);
+    }
+    function setAccentColor(id) { accentColor.value = id; localStorage.setItem("dl_accent", id); applyCustomization(); }
+    function setDensity(v) { density.value = v; localStorage.setItem("dl_density", v); applyCustomization(); }
+    function setStepsPosition(v) { stepsPosition.value = v; localStorage.setItem("dl_steps_position", v); applyCustomization(); }
+    applyCustomization();
+
+    // ── Onboarding (primeira abertura) ────────────────────────────────────
+    const ONBOARDING_SLIDES = [
+      {
+        icon: "sparkles",
+        title: "Bem-vindo ao datalock Studio",
+        text: "Uma interface de apontar e clicar para limpar, transformar e anonimizar dados — sem precisar escrever código.",
+      },
+      {
+        icon: "upload",
+        title: "1. Importe um arquivo",
+        text: "Arraste um CSV, XLSX ou JSON para a tela inicial. Cada planilha ou tabela vira uma aba própria, que você pode trabalhar independentemente.",
+      },
+      {
+        icon: "plus-circle",
+        title: "2. Monte uma receita",
+        text: "Clique em \"Adicionar\" e escolha um passo: filtrar, ordenar, agrupar, mascarar uma coluna... A prévia à esquerda atualiza sozinha a cada passo.",
+      },
+      {
+        icon: "shield",
+        title: "3. Detecte e anonimize",
+        text: "O ícone de busca aponta colunas que parecem CPF, e-mail ou telefone. Marque a coluna, escolha um método de mascaramento, e pronto.",
+      },
+      {
+        icon: "download",
+        title: "4. Exporte o resultado",
+        text: "Quando terminar, exporte como CSV, Excel ou JSON. Salve a receita para reaplicar depois em outro arquivo parecido — sem refazer os passos.",
+      },
+    ];
+    const showOnboarding = ref(false);
+    const onboardingStep = ref(0);
+    function startOnboarding() { onboardingStep.value = 0; showOnboarding.value = true; }
+    function nextOnboarding() {
+      if (onboardingStep.value < ONBOARDING_SLIDES.length - 1) onboardingStep.value += 1;
+      else finishOnboarding();
+    }
+    function prevOnboarding() { if (onboardingStep.value > 0) onboardingStep.value -= 1; }
+    function finishOnboarding() {
+      showOnboarding.value = false;
+      localStorage.setItem("dl_onboarding_seen", "1");
+    }
+    if (!localStorage.getItem("dl_onboarding_seen")) {
+      showOnboarding.value = true;
+    }
+
+    // ── Guia de ajuda ──────────────────────────────────────────────────────
+    const showHelpGuide = ref(false);
+
     function icon(name, opts) { return iconFn(name, opts); }
 
     const salt = ref("");
     const saltVisible = ref(false);
     const dlkKey = ref("");
     const dlkKeyVisible = ref(false);
+    const saltStrength = computed(() => {
+      if (!salt.value) return null;
+      const check = validateSaltStrength(salt.value);
+      if (!check.ok) return { level: "weak", label: "fraco", detail: check.errors[0] };
+      if (check.warnings.length) return { level: "medium", label: "razoável", detail: check.warnings[0] };
+      return { level: "strong", label: "forte", detail: "Salt com boa entropia." };
+    });
+    const dlkKeyStrength = computed(() => {
+      if (!dlkKey.value) return null;
+      const check = validateSaltStrength(dlkKey.value);
+      if (!check.ok) return { level: "weak", label: "fraca", detail: check.errors[0] };
+      if (check.warnings.length) return { level: "medium", label: "razoável", detail: check.warnings[0] };
+      return { level: "strong", label: "forte", detail: "Chave com boa entropia." };
+    });
 
     const showStepPicker = ref(false);
     const stepSearchQuery = ref("");
@@ -601,7 +683,12 @@ createApp({
     return {
       engineMode, tabs, activeTabId, activeTab,
       theme, toggleTheme, isDarkNow, icon,
-      salt, saltVisible, dlkKey, dlkKeyVisible,
+      accentColorOptions: ACCENT_OPTIONS, accentColor, density, stepsPosition, showSettingsPanel,
+      setAccentColor, setDensity, setStepsPosition,
+      showOnboarding, onboardingStep, onboardingSlides: ONBOARDING_SLIDES,
+      nextOnboarding, prevOnboarding, finishOnboarding, startOnboarding,
+      showHelpGuide,
+      salt, saltVisible, saltStrength, dlkKey, dlkKeyVisible, dlkKeyStrength,
       showStepPicker, stepSearchQuery, filteredStepTypes, draftStep, showPiiPanel,
       showUnmaskPanel, unmaskColumns, unmaskError,
       showExportPanel, showAbout, exportFormat, exportFilename,
