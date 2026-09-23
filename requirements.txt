@@ -1,0 +1,9 @@
+datalock>=1.1.6
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+xlsxwriter>=3.1
+fastexcel>=0.10
+openpyxl>=3.1
+pywebview>=4.4
+scipy>=1.18.1

@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<!--
+  datalock Studio — Copyright © 2026 [SEU NOME/EMPRESA]. Todos os direitos
+  reservados. Software proprietário — ver LICENSE na raiz deste repositório.
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>datalock Studio — anonimização e manipulação de dados sem código</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
+<link rel="stylesheet" href="css/style.css" />
+
+<!-- Dependências (CDN — sem build step; ok para GitHub Pages) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div id="app" v-cloak>
+
+  <!-- ══════════════════ HEADER ══════════════════ -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="icon" v-html="icon('shield')"></span>
+      <strong>datalock Studio</strong> <span class="muted">— no-code</span>
+    </div>
+    <div class="engine-badge" :class="engineMode">
+      <span class="dot"></span>
+      {{ engineMode === 'server' ? 'Software completo conectado' : 'Prévia (roda no seu navegador)' }}
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn theme-toggle" @click="toggleTheme" :title="isDarkNow ? 'Mudar para tema claro' : 'Mudar para tema escuro'">
+        <span class="icon" v-html="icon(isDarkNow ? 'sun' : 'moon')"></span>
+      </button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openJobsPanel">
+        <span class="icon" v-html="icon('zap')"></span> Automação
+      </button>
+      <button class="btn ghost" @click="showAbout = true">
+        <span class="icon" v-html="icon('info')"></span> Sobre / limites
+      </button>
+    </div>
+  </header>
+
+  <!-- ══════════════════ TELA INICIAL (nenhuma tabela aberta) ══════════════════ -->
+  <section v-if="!tabs.length" class="dropzone-screen"
+           @dragover.prevent="isDraggingOver = true" @dragleave.prevent="isDraggingOver = false"
+           @drop.prevent="onDrop($event); isDraggingOver = false">
+    <div class="dropzone" :class="{ 'drag-active': isDraggingOver }">
+      <div class="dropzone-icon"><span class="icon" v-html="icon('folder', {size: 40})"></span></div>
+      <h1>Arraste um arquivo aqui</h1>
+      <p class="muted">CSV, XLSX ou JSON — ou clique para escolher</p>
+      <input ref="fileInput" type="file" accept=".csv,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
+      <button class="btn primary" @click="$refs.fileInput.click()">
+        <span class="icon" v-html="icon('upload')"></span> Escolher arquivo
+      </button>
+      <p class="hint">
+        XLSX com várias planilhas e .dlk com várias tabelas abrem automaticamente
+        como abas separadas. Depois de abrir um arquivo, dá pra carregar uma receita
+        salva antes pela barra de ferramentas.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════ WORKSPACE ══════════════════ -->
+  <div v-else class="workspace">
+
+    <!-- Barra de abas (uma por tabela aberta) -->
+    <div class="tabs-bar">
+      <div v-for="tab in tabs" :key="tab.id"
+           class="tab" :class="{ active: tab.id === activeTabId }"
+           @click="selectTab(tab.id)">
+        <span class="tab-name" :title="tab.name">{{ tab.name }}</span>
+        <button class="tab-close" @click.stop="closeTab(tab.id)" title="Fechar tabela">
+          <span class="icon" v-html="icon('x', {size: 13})"></span>
+        </button>
+      </div>
+      <input ref="addTableInput" type="file" accept=".csv,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
+      <button class="tab-add" @click="$refs.addTableInput.click()" title="Abrir mais uma tabela">
+        <span class="icon" v-html="icon('plus', {size: 14})"></span>
+      </button>
+    </div>
+
+    <!-- Barra de ferramentas -->
+    <div class="toolbar" v-if="activeTab">
+      <button class="btn ghost" @click="saveRecipe"><span class="icon" v-html="icon('save')"></span> Salvar receita</button>
+      <button class="btn ghost" @click="$refs.openRecipeInput.click()"><span class="icon" v-html="icon('folder-plus')"></span> Abrir receita</button>
+      <input ref="openRecipeInput" type="file" accept=".json" @change="onRecipePicked" hidden />
+      <span class="sep"></span>
+      <button class="btn ghost" @click="showPiiPanel = true"><span class="icon" v-html="icon('search')"></span> Detectar dados pessoais</button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openUnmaskPanel"><span class="icon" v-html="icon('key')"></span> Reverter mascaramento</button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openDbPanel"><span class="icon" v-html="icon('database')"></span> Banco de dados</button>
+      <span class="grow"></span>
+      <div class="salt-box">
+        <label>Salt</label>
+        <div class="secret-field">
+          <input type="text" :class="{ 'secret-mask': !saltVisible }"
+                 v-model="salt" placeholder="necessário para mascarar/anonimizar"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                 data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" name="dl_salt_field" />
+          <button class="icon-btn" type="button" @click="saltVisible = !saltVisible" :title="saltVisible ? 'Ocultar' : 'Mostrar'">
+            <span class="icon" v-html="icon(saltVisible ? 'eye-off' : 'eye', {size: 15})"></span>
+          </button>
+        </div>
+        <button class="btn tiny" @click="generateSalt" title="Gerar salt aleatório forte">
+          <span class="icon" v-html="icon('repeat', {size: 14})"></span>
+        </button>
+      </div>
+      <button class="btn success" @click="showExportPanel = true"><span class="icon" v-html="icon('download')"></span> Exportar</button>
+    </div>
+
+    <div class="main-grid" v-if="activeTab">
+
+      <!-- Grade de dados -->
+      <div class="grid-panel">
+        <div class="grid-meta">
+          <strong>{{ activeTab.totalRows.toLocaleString('pt-BR') }}</strong> linhas ·
+          <strong>{{ activeTab.columns.length }}</strong> colunas
+          <span v-if="activeTab.running" class="running-badge">⏳ recalculando…</span>
+          <span v-if="activeTab.errorMessage" class="error-badge" :title="activeTab.errorMessage">
+            <span class="icon" v-html="icon('alert', {size: 13})"></span> {{ activeTab.errorMessage }}
+          </span>
+        </div>
+        <div class="grid-scroll">
+          <table class="data-grid" v-if="activeTab.previewRows.length">
+            <thead>
+              <tr>
+                <th v-for="col in activeTab.columns" :key="col">
+                  <div class="col-head">
+                    <span>{{ col }}</span>
+                    <span v-if="activeTab.piiReport[col]" class="pii-chip" :class="activeTab.piiReport[col].risk"
+                          :title="'Possível ' + activeTab.piiReport[col].label">
+                      {{ activeTab.piiReport[col].label }}
+                    </span>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in activeTab.previewRows" :key="i">
+                <td v-for="col in activeTab.columns" :key="col">{{ formatCell(row[col]) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="empty-state">Nenhuma linha para mostrar — confira os passos aplicados.</div>
+        </div>
+        <div class="grid-footer muted" v-if="activeTab.totalRows > activeTab.previewRows.length">
+          Mostrando as primeiras {{ activeTab.previewRows.length }} linhas de {{ activeTab.totalRows.toLocaleString('pt-BR') }}.
+        </div>
+      </div>
+
+      <!-- Passos aplicados (estilo Power Query) -->
+      <aside class="steps-panel">
+        <div class="steps-header">
+          <strong>Passos aplicados</strong>
+          <button class="btn tiny primary" @click="openStepPicker">
+            <span class="icon" v-html="icon('plus', {size: 13})"></span> Adicionar
+          </button>
+        </div>
+        <div class="steps-list">
+          <div v-if="!activeTab.steps.length" class="empty-state small">
+            Nenhum passo ainda. Clique em "Adicionar" para começar a transformar os dados.
+          </div>
+          <div v-for="(step, idx) in activeTab.steps" :key="step.id"
+               class="step-card" :class="{ disabled: step.enabled === false }"
+               draggable="true"
+               @dragstart="dragStart(idx)" @dragover.prevent @drop="dropOn(idx)">
+            <div class="step-drag"><span class="icon" v-html="icon('grip-vertical', {size: 15})"></span></div>
+            <div class="step-icon"><span class="icon" v-html="icon(stepTypeMeta(step.type).icon, {size: 16})"></span></div>
+            <div class="step-body">
+              <div class="step-title">{{ stepLabel(step) }}</div>
+              <div class="step-desc muted">{{ stepDescription(step) }}</div>
+            </div>
+            <div class="step-actions">
+              <button class="icon-btn" @click="toggleStep(idx)" :title="step.enabled === false ? 'Ativar' : 'Desativar'">
+                <span class="icon" v-html="icon(step.enabled === false ? 'play' : 'pause', {size: 14})"></span>
+              </button>
+              <button class="icon-btn" @click="editStep(idx)" title="Editar">
+                <span class="icon" v-html="icon('edit', {size: 14})"></span>
+              </button>
+              <button class="icon-btn" @click="removeStep(idx)" title="Remover">
+                <span class="icon" v-html="icon('trash', {size: 14})"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- ══════════════════ MODAL: pedir chave (.dlk criptografado) ══════════════════ -->
+  <div v-if="showKeyPrompt" class="modal-backdrop" @click.self="cancelKeyPrompt">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('key')"></span> Este arquivo está criptografado</h2>
+      <p class="muted">Informe a chave (key) usada para criar este .dlk.</p>
+      <div class="secret-field">
+        <input type="text" :class="{ 'secret-mask': !keyPromptVisible }" v-model="keyPromptValue"
+               placeholder="chave de criptografia"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+               data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" name="dl_open_key_field" />
+        <button class="icon-btn" type="button" @click="keyPromptVisible = !keyPromptVisible">
+          <span class="icon" v-html="icon(keyPromptVisible ? 'eye-off' : 'eye', {size: 15})"></span>
+        </button>
+      </div>
+      <p v-if="keyPromptError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ keyPromptError }}</p>
+      <div class="modal-actions">
+        <button class="btn ghost" @click="cancelKeyPrompt">Cancelar</button>
+        <button class="btn primary" @click="confirmKeyPrompt">Abrir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ COMMAND PALETTE: escolher tipo de passo ══════════════════ -->
+  <div v-if="showStepPicker" class="modal-backdrop" @click.self="showStepPicker = false">
+    <div class="modal command-palette">
+      <div class="command-search">
+        <span class="icon" v-html="icon('search', {size: 16})"></span>
+        <input type="text" v-model="stepSearchQuery" placeholder="Buscar um tipo de passo…" autofocus />
+        <button class="icon-btn" @click="showStepPicker = false"><span class="icon" v-html="icon('x', {size: 15})"></span></button>
+      </div>
+      <div class="command-list">
+        <button v-for="t in filteredStepTypes" :key="t.type" class="command-item" @click="startNewStep(t.type)">
+          <span class="command-item-icon"><span class="icon" v-html="icon(t.icon, {size: 16})"></span></span>
+          <span class="command-item-text">
+            <span class="command-item-name">{{ t.name }}</span>
+            <span class="command-item-desc">{{ t.desc }}</span>
+          </span>
+        </button>
+        <div v-if="!filteredStepTypes.length" class="command-empty">Nenhum tipo de passo encontrado para "{{ stepSearchQuery }}".</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ DRAWER: editor de passo ══════════════════ -->
+  <div v-if="draftStep" class="drawer-backdrop" @click.self="cancelStepEdit"></div>
+  <aside v-if="draftStep" class="drawer">
+    <div class="drawer-header">
+      <span class="icon" v-html="icon(stepTypeMeta(draftStep.type).icon)"></span>
+      <h2>{{ stepTypeMeta(draftStep.type).name }}</h2>
+      <button class="icon-btn" @click="cancelStepEdit"><span class="icon" v-html="icon('x', {size: 16})"></span></button>
+    </div>
+    <div class="drawer-body">
+
+      <!-- select_columns / drop_columns -->
+      <div v-if="draftStep.type === 'select_columns' || draftStep.type === 'drop_columns'" class="field-block">
+        <label>Colunas</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.columns" /> {{ col }}
+          </label>
+        </div>
+      </div>
+
+      <!-- rename -->
+      <div v-if="draftStep.type === 'rename'" class="field-block">
+        <label>Renomear</label>
+        <div v-for="col in activeTab.columns" :key="col" class="rename-row">
+          <span class="muted">{{ col }} →</span>
+          <input type="text" :placeholder="col" v-model="draftStep.mapping[col]" />
+        </div>
+      </div>
+
+      <!-- filter -->
+      <div v-if="draftStep.type === 'filter'" class="field-block">
+        <label>Condições (
+          <select v-model="draftStep.logic"><option value="and">todas (E)</option><option value="or">qualquer uma (OU)</option></select>
+          )</label>
+        <div v-for="(cond, i) in draftStep.conditions" :key="i" class="condition-row">
+          <select v-model="cond.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+          <select v-model="cond.op">
+            <option value="==">é igual a</option><option value="!=">é diferente de</option>
+            <option value=">">maior que</option><option value=">=">maior ou igual</option>
+            <option value="<">menor que</option><option value="<=">menor ou igual</option>
+            <option value="contains">contém</option><option value="starts_with">começa com</option>
+            <option value="ends_with">termina com</option><option value="is_null">é vazio</option>
+            <option value="not_null">não é vazio</option>
+          </select>
+          <input v-if="!['is_null','not_null'].includes(cond.op)" type="text" v-model="cond.value" placeholder="valor" />
+          <button class="icon-btn" @click="draftStep.conditions.splice(i,1)"><span class="icon" v-html="icon('trash', {size: 14})"></span></button>
+        </div>
+        <button class="btn tiny ghost" @click="draftStep.conditions.push({column: activeTab.columns[0], op: '==', value: ''})">+ condição</button>
+      </div>
+
+      <!-- sort -->
+      <div v-if="draftStep.type === 'sort'" class="field-block">
+        <label>Ordenar por</label>
+        <select v-model="draftStep.by"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label class="checkbox-row"><input type="checkbox" v-model="draftStep.descending" /> Decrescente</label>
+      </div>
+
+      <!-- dedupe -->
+      <div v-if="draftStep.type === 'dedupe'" class="field-block">
+        <label>Considerar duplicata quando estas colunas forem iguais (vazio = todas)</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.subset" /> {{ col }}
+          </label>
+        </div>
+      </div>
+
+      <!-- cast -->
+      <div v-if="draftStep.type === 'cast'" class="field-block">
+        <label>Coluna</label>
+        <select v-model="draftStep.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label>Converter para</label>
+        <select v-model="draftStep.to">
+          <option value="string">Texto</option><option value="integer">Número inteiro</option>
+          <option value="float">Número decimal</option><option value="boolean">Verdadeiro/falso</option>
+          <option value="date">Data</option>
+        </select>
+      </div>
+
+      <!-- fill_null -->
+      <div v-if="draftStep.type === 'fill_null'" class="field-block">
+        <label>Coluna</label>
+        <select v-model="draftStep.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label>Preencher vazios com</label>
+        <input type="text" v-model="draftStep.value" />
+      </div>
+
+      <!-- derive_column -->
+      <div v-if="draftStep.type === 'derive_column'" class="field-block">
+        <label>Nome da nova coluna</label>
+        <input type="text" v-model="draftStep.new_column" placeholder="ex.: imposto" />
+        <label>Tipo de cálculo</label>
+        <select v-model="draftStep.expression.kind">
+          <option value="arithmetic">Aritmético (coluna/número operador coluna/número)</option>
+          <option value="text">Texto (maiúsculas/minúsculas/espaços)</option>
+        </select>
+        <template v-if="draftStep.expression.kind === 'arithmetic'">
+          <div class="condition-row">
+            <select v-model="draftStep.expression.leftIsColumn">
+              <option :value="true">Coluna</option><option :value="false">Número fixo</option>
+            </select>
+            <select v-if="draftStep.expression.leftIsColumn" v-model="draftStep.expression.left">
+              <option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <input v-else type="number" v-model="draftStep.expression.left" />
+            <select v-model="draftStep.expression.op">
+              <option value="+">+</option><option value="-">−</option><option value="*">×</option><option value="/">÷</option>
+            </select>
+            <select v-model="draftStep.expression.rightIsColumn">
+              <option :value="true">Coluna</option><option :value="false">Número fixo</option>
+            </select>
+            <select v-if="draftStep.expression.rightIsColumn" v-model="draftStep.expression.right">
+              <option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <input v-else type="number" v-model="draftStep.expression.right" />
+          </div>
+        </template>
+        <template v-else>
+          <select v-model="draftStep.expression.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+          <select v-model="draftStep.expression.textOp">
+            <option value="upper">MAIÚSCULAS</option><option value="lower">minúsculas</option><option value="trim">remover espaços</option>
+          </select>
+        </template>
+      </div>
+
+      <!-- split_column -->
+      <div v-if="draftStep.type === 'split_column'" class="field-block">
+        <label>Coluna</label>
+        <select v-model="draftStep.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label>Separador</label>
+        <input type="text" v-model="draftStep.delimiter" placeholder="ex.: espaço, vírgula, -" />
+        <label>Nomes das novas colunas (separados por vírgula)</label>
+        <input type="text" :value="draftStep.into.join(', ')" @input="draftStep.into = $event.target.value.split(',').map(s => s.trim())" />
+      </div>
+
+      <!-- merge_columns -->
+      <div v-if="draftStep.type === 'merge_columns'" class="field-block">
+        <label>Colunas a unir (na ordem)</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.columns" /> {{ col }}
+          </label>
+        </div>
+        <label>Separador</label>
+        <input type="text" v-model="draftStep.separator" placeholder="ex.: espaço, -, /" />
+        <label>Nome da nova coluna</label>
+        <input type="text" v-model="draftStep.into" />
+      </div>
+
+      <!-- groupby -->
+      <div v-if="draftStep.type === 'groupby'" class="field-block">
+        <label>Agrupar por</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.by" /> {{ col }}
+          </label>
+        </div>
+        <label>Agregações</label>
+        <div v-for="(agg, i) in draftStep.aggregations" :key="i" class="condition-row">
+          <select v-model="agg.fn">
+            <option value="count">contar</option><option value="sum">somar</option><option value="mean">média</option>
+            <option value="min">mínimo</option><option value="max">máximo</option><option value="median">mediana</option>
+            <option value="nunique">valores distintos</option>
+          </select>
+          <select v-model="agg.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+          <input type="text" v-model="agg.as" placeholder="nome do resultado" />
+          <button class="icon-btn" @click="draftStep.aggregations.splice(i,1)"><span class="icon" v-html="icon('trash', {size: 14})"></span></button>
+        </div>
+        <button class="btn tiny ghost" @click="draftStep.aggregations.push({fn:'count', column: activeTab.columns[0], as:''})">+ agregação</button>
+      </div>
+
+      <!-- pivot -->
+      <div v-if="draftStep.type === 'pivot'" class="field-block">
+        <label>Linhas (index)</label>
+        <select v-model="draftStep.index"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label>Colunas (on)</label>
+        <select v-model="draftStep.on"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label>Valores</label>
+        <select v-model="draftStep.values"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label>Agregação</label>
+        <select v-model="draftStep.agg_fn">
+          <option value="sum">soma</option><option value="mean">média</option><option value="count">contagem</option>
+          <option value="min">mínimo</option><option value="max">máximo</option>
+        </select>
+      </div>
+
+      <!-- mask -->
+      <div v-if="draftStep.type === 'mask'" class="field-block">
+        <label>Colunas a mascarar</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.columns" /> {{ col }}
+            <span v-if="activeTab.piiReport[col]" class="pii-chip" :class="activeTab.piiReport[col].risk">{{ activeTab.piiReport[col].label }}</span>
+          </label>
+        </div>
+        <label>Método</label>
+        <select v-model="draftStep.strategy">
+          <option value="hash">Hash irreversível (recomendado p/ anonimizar — determinístico, permite join)</option>
+          <option value="redact">Substituir por "REDACTED"</option>
+          <option value="suppress">Apagar (vira vazio)</option>
+          <option value="truncate">Truncar (mantém só o início)</option>
+          <option value="mask_phone_ddd">Manter DDD, mascarar o resto (telefone)</option>
+          <option value="generalize_date">Generalizar data (manter só o ano)</option>
+          <option value="mock_numeric">Substituir por número sintético (aproximado)</option>
+          <option value="mock_category">Substituir por categoria sintética (aproximado)</option>
+          <option value="encrypt" :disabled="engineMode !== 'server'">
+            Criptografia reversível — só no software completo
+          </option>
+        </select>
+        <template v-if="draftStep.strategy === 'hash'">
+          <label>Tratar valor como (define a normalização antes do hash)</label>
+          <div v-for="col in draftStep.columns" :key="col" class="condition-row">
+            <span class="muted">{{ col }}:</span>
+            <select v-model="draftStep.piiKindByColumn[col]">
+              <option value="generic">Texto genérico</option>
+              <option value="cpf">CPF/CNPJ (remove pontuação)</option>
+              <option value="email">E-mail (minúsculas)</option>
+            </select>
+          </div>
+        </template>
+        <label class="checkbox-row">
+          <input type="checkbox" :checked="!!draftStep.rows" @change="toggleRowsCondition($event)" />
+          Mascarar só algumas linhas (condição)
+        </label>
+        <div v-if="draftStep.rows" class="field-block nested">
+          <div v-for="(cond, i) in draftStep.rows.conditions" :key="i" class="condition-row">
+            <select v-model="cond.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+            <select v-model="cond.op">
+              <option value="==">é igual a</option><option value="!=">é diferente de</option>
+              <option value=">">maior que</option><option value="<">menor que</option>
+              <option value="contains">contém</option>
+            </select>
+            <input type="text" v-model="cond.value" placeholder="valor" />
+            <button class="icon-btn" @click="draftStep.rows.conditions.splice(i,1)"><span class="icon" v-html="icon('trash', {size: 14})"></span></button>
+          </div>
+          <button class="btn tiny ghost" @click="draftStep.rows.conditions.push({column: activeTab.columns[0], op:'==', value:''})">+ condição</button>
+        </div>
+        <p v-if="!salt && draftStep.strategy === 'hash'" class="warn-text">
+          <span class="icon" v-html="icon('alert', {size: 13})"></span> Informe um salt na barra de ferramentas antes de rodar este passo.
+        </p>
+      </div>
+
+    </div>
+    <div class="drawer-footer">
+      <button class="btn ghost" @click="cancelStepEdit">Cancelar</button>
+      <button class="btn primary" @click="confirmStep">Salvar passo</button>
+    </div>
+  </aside>
+
+  <!-- ══════════════════ PAINEL: Privacidade / PII ══════════════════ -->
+  <div v-if="showPiiPanel && activeTab" class="modal-backdrop" @click.self="showPiiPanel = false">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('search')"></span> Dados pessoais detectados</h2>
+      <p class="muted">
+        Heurística leve (padrões comuns de CPF/CNPJ/e-mail/telefone/CEP) rodando no navegador —
+        para o relatório completo (k-anonimato, risco de reidentificação), use o software completo.
+      </p>
+      <table class="pii-table" v-if="Object.keys(activeTab.piiReport).length">
+        <thead><tr><th>Coluna</th><th>Tipo sugerido</th><th>Risco</th><th>% de correspondência</th></tr></thead>
+        <tbody>
+          <tr v-for="(info, col) in activeTab.piiReport" :key="col">
+            <td>{{ col }}</td><td>{{ info.label }}</td>
+            <td><span class="pii-chip" :class="info.risk">{{ info.risk }}</span></td>
+            <td>{{ Math.round((info.matchRatio ?? 0) * 100) }}%</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else>Nenhuma coluna com padrão de dado pessoal foi detectada na amostra.</p>
+      <div class="modal-actions"><button class="btn primary" @click="showPiiPanel = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Reverter mascaramento (unmask) ══════════════════ -->
+  <div v-if="showUnmaskPanel && activeTab" class="modal-backdrop" @click.self="showUnmaskPanel = false">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('key')"></span> Reverter mascaramento (unmask)</h2>
+      <p class="muted">
+        Só funciona para colunas mascaradas com o método "Criptografia reversível" (encrypt),
+        com o MESMO salt usado para mascarar. Roda a receita atual, reverte, e abre o
+        resultado como uma aba nova — pronta para exportar ou continuar trabalhando nela.
+      </p>
+      <label>Colunas a reverter</label>
+      <div class="checkbox-list">
+        <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+          <input type="checkbox" :value="col" v-model="unmaskColumns" /> {{ col }}
+        </label>
+      </div>
+      <p v-if="unmaskError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ unmaskError }}</p>
+      <div class="modal-actions">
+        <button class="btn ghost" @click="showUnmaskPanel = false">Fechar</button>
+        <button class="btn primary" @click="doUnmask">Reverter e abrir aba</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Banco de dados ══════════════════ -->
+  <div v-if="showDbPanel" class="modal-backdrop" @click.self="showDbPanel = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('database')"></span> Banco de dados</h2>
+
+      <!-- Não conectado: formulário de conexão -->
+      <div v-if="!dbConnectionId" class="field-block">
+        <label>String de conexão (URI)</label>
+        <div class="secret-field">
+          <input type="text" :class="{ 'secret-mask': !dbUriVisible }" v-model="dbUri"
+                 placeholder="postgresql://usuario:senha@host/banco"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                 data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" name="dl_db_uri_field"
+                 @keyup.enter="connectDb" />
+          <button class="icon-btn" type="button" @click="dbUriVisible = !dbUriVisible">
+            <span class="icon" v-html="icon(dbUriVisible ? 'eye-off' : 'eye', {size: 15})"></span>
+          </button>
+        </div>
+        <p v-if="dbConnectError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ dbConnectError }}</p>
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 4px;">
+          <button class="btn primary" :disabled="dbConnecting" @click="connectDb">
+            {{ dbConnecting ? 'Conectando…' : 'Conectar' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Conectado: ler tabelas / SQL, e (se houver aba ativa) enviar resultado -->
+      <template v-else>
+        <div class="grid-meta" style="margin-bottom: 12px;">
+          <span class="pii-chip low">conectado</span>
+          <button class="btn tiny ghost" @click="disconnectDb">Desconectar</button>
+        </div>
+
+        <div class="field-block">
+          <label>Abrir uma tabela como nova aba</label>
+          <div class="checkbox-list" style="max-height: 130px;">
+            <div v-for="t in dbTablesList" :key="t" class="checkbox-row" style="justify-content: space-between;">
+              <span style="font-family: var(--font-mono);">{{ t }}</span>
+              <button class="btn tiny ghost" @click="openDbTableAsTab(t)">Abrir</button>
+            </div>
+            <div v-if="!dbTablesList.length" class="muted" style="padding: 6px 0;">Nenhuma tabela encontrada.</div>
+          </div>
+        </div>
+
+        <div class="field-block">
+          <label>Ou rodar uma consulta SQL e abrir o resultado como aba</label>
+          <input type="text" v-model="dbSqlQuery" placeholder="SELECT * FROM clientes WHERE uf = 'SP'"
+                 style="font-family: var(--font-mono);" @keyup.enter="runDbSqlAsTab" />
+          <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+            <button class="btn tiny primary" @click="runDbSqlAsTab">Rodar e abrir</button>
+          </div>
+        </div>
+        <p v-if="dbReadError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ dbReadError }}</p>
+
+        <template v-if="activeTab">
+          <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
+            <label>Enviar o resultado da aba "{{ activeTab.name }}" para uma tabela</label>
+            <input type="text" v-model="dbWriteTableName" placeholder="nome da tabela de destino" />
+            <select v-model="dbWriteMode">
+              <option value="append">Adicionar às linhas existentes</option>
+              <option value="replace">Substituir a tabela inteira</option>
+              <option value="upsert">Atualizar por coluna-chave (upsert)</option>
+            </select>
+            <template v-if="dbWriteMode === 'upsert'">
+              <label>Coluna(s)-chave</label>
+              <div class="checkbox-list">
+                <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+                  <input type="checkbox" :value="col" v-model="dbUpsertColumns" /> {{ col }}
+                </label>
+              </div>
+            </template>
+            <p v-if="dbWriteError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ dbWriteError }}</p>
+            <p v-if="dbWriteSuccess" class="warn-text" style="color: var(--success);">
+              <span class="icon" v-html="icon('check', {size: 13})"></span> {{ dbWriteSuccess }}
+            </p>
+            <div class="modal-actions" style="justify-content: flex-start; margin-top: 4px;">
+              <button class="btn success" @click="sendActiveTabToDb">Enviar para o banco</button>
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <div class="modal-actions">
+        <button class="btn ghost" @click="showDbPanel = false">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Exportar ══════════════════ -->
+  <div v-if="showExportPanel && activeTab" class="modal-backdrop" @click.self="showExportPanel = false">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('download')"></span> Exportar resultado</h2>
+      <label>Formato</label>
+      <select v-model="exportFormat">
+        <option value="csv">CSV</option>
+        <option value="xlsx">Excel (.xlsx)</option>
+        <option value="json">JSON</option>
+        <option value="parquet" :disabled="engineMode !== 'server'">Parquet — só no software completo</option>
+        <option value="dlk_open" :disabled="engineMode !== 'server'">.dlk sem criptografia — só no software completo</option>
+        <option value="dlk_encrypted" :disabled="engineMode !== 'server'">.dlk criptografado — só no software completo</option>
+      </select>
+      <label>Nome do arquivo</label>
+      <input type="text" v-model="exportFilename" />
+      <div v-if="exportFormat === 'dlk_encrypted'" class="field-block nested">
+        <label>Chave de criptografia (key)</label>
+        <div class="secret-field">
+          <input type="text" :class="{ 'secret-mask': !dlkKeyVisible }" v-model="dlkKey"
+                 placeholder="obrigatória para .dlk criptografado"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                 data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" name="dl_key_field" />
+          <button class="icon-btn" type="button" @click="dlkKeyVisible = !dlkKeyVisible" :title="dlkKeyVisible ? 'Ocultar' : 'Mostrar'">
+            <span class="icon" v-html="icon(dlkKeyVisible ? 'eye-off' : 'eye', {size: 15})"></span>
+          </button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" @click="showExportPanel = false">Cancelar</button>
+        <button class="btn success" @click="doExport">Exportar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Automações (lista) ══════════════════ -->
+  <div v-if="showJobsPanel" class="modal-backdrop" @click.self="showJobsPanel = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('zap')"></span> Automações</h2>
+      <p class="muted">
+        Cada automação vigia uma pasta ou consulta um banco, aplica uma receita
+        e manda o resultado para outra pasta ou banco — sem precisar abrir a
+        interface toda vez.
+      </p>
+
+      <div class="modal-actions" style="justify-content: flex-start; margin: 10px 0 14px;">
+        <button class="btn primary" @click="startNewJob">
+          <span class="icon" v-html="icon('plus', {size: 14})"></span> Nova automação
+        </button>
+        <button class="btn ghost" @click="refreshJobs"><span class="icon" v-html="icon('refresh-cw', {size: 14})"></span></button>
+      </div>
+
+      <p v-if="jobsListError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ jobsListError }}</p>
+      <p v-if="jobsLoading" class="muted">Carregando…</p>
+
+      <div v-if="!jobsLoading && !jobsList.length" class="empty-state small">
+        Nenhuma automação criada ainda.
+      </div>
+
+      <div v-for="job in jobsList" :key="job.id" class="step-card" style="margin-bottom: 8px; cursor: default;">
+        <div class="step-icon"><span class="icon" v-html="icon(job.trigger.kind === 'watch' ? 'search' : job.trigger.kind === 'interval' ? 'clock' : 'play')"></span></div>
+        <div class="step-body">
+          <div class="step-title">
+            {{ job.name }}
+            <span class="pii-chip" :class="job.enabled ? 'low' : 'medium'">{{ job.enabled ? 'ativa' : 'pausada' }}</span>
+          </div>
+          <div class="step-desc" style="white-space: normal;">
+            {{ job.source.kind === 'folder' ? job.source.path : job.source.table_or_sql }}
+            <span class="icon" v-html="icon('arrow-right', {size: 11})" style="vertical-align: middle;"></span>
+            {{ job.destination.kind === 'folder' ? job.destination.path : job.destination.table }}
+          </div>
+          <div class="step-desc muted" style="white-space: normal; font-family: var(--font-ui);">
+            Gatilho: {{ job.trigger.kind === 'watch' ? 'vigiar pasta' : job.trigger.kind === 'interval' ? ('a cada ' + job.trigger.interval_seconds + 's') : 'manual' }}
+            · Último uso: {{ formatTimestamp(job.last_run_at) }}
+            <span v-if="job.last_run_status" class="pii-chip" :class="job.last_run_status === 'error' ? 'high' : job.last_run_status === 'partial' ? 'medium' : 'low'">
+              {{ job.last_run_status }}
+            </span>
+          </div>
+        </div>
+        <div class="step-actions">
+          <button class="icon-btn" title="Rodar agora" @click="runJobNowClick(job)"><span class="icon" v-html="icon('play', {size: 14})"></span></button>
+          <button class="icon-btn" title="Histórico" @click="viewJobRuns(job)"><span class="icon" v-html="icon('history', {size: 14})"></span></button>
+          <button class="icon-btn" :title="job.enabled ? 'Pausar' : 'Ativar'" @click="toggleJobEnabled(job)">
+            <span class="icon" v-html="icon(job.enabled ? 'pause' : 'play', {size: 14})"></span>
+          </button>
+          <button class="icon-btn" title="Editar" @click="editJob(job)"><span class="icon" v-html="icon('edit', {size: 14})"></span></button>
+          <button class="icon-btn" title="Remover" @click="deleteJobConfirm(job)"><span class="icon" v-html="icon('trash', {size: 14})"></span></button>
+        </div>
+      </div>
+
+      <div class="modal-actions"><button class="btn ghost" @click="showJobsPanel = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ DRAWER: criar/editar automação ══════════════════ -->
+  <div v-if="jobFormOpen" class="drawer-backdrop" @click.self="cancelJobForm"></div>
+  <aside v-if="jobFormOpen" class="drawer">
+    <div class="drawer-header">
+      <span class="icon" v-html="icon('zap')"></span>
+      <h2>{{ editingJobId ? 'Editar automação' : 'Nova automação' }}</h2>
+      <button class="icon-btn" @click="cancelJobForm"><span class="icon" v-html="icon('x', {size: 16})"></span></button>
+    </div>
+    <div class="drawer-body" v-if="jobDraft">
+
+      <div class="field-block">
+        <label>Nome</label>
+        <input type="text" v-model="jobDraft.name" placeholder="ex.: Anonimizar exports do financeiro" />
+      </div>
+
+      <div class="field-block">
+        <label>Origem</label>
+        <select v-model="jobDraft.source.kind">
+          <option value="folder">Pasta</option>
+          <option value="database">Banco de dados</option>
+        </select>
+        <template v-if="jobDraft.source.kind === 'folder'">
+          <input type="text" v-model="jobDraft.source.path" placeholder="caminho da pasta de origem" />
+          <input type="text" v-model="jobDraft.source.pattern" placeholder="padrão do arquivo, ex.: *.csv" />
+          <label>Depois de processar</label>
+          <select v-model="jobDraft.source.after">
+            <option value="leave">Deixar no lugar (não reprocessa o mesmo arquivo)</option>
+            <option value="move">Mover para outra pasta</option>
+            <option value="delete">Apagar</option>
+          </select>
+          <input v-if="jobDraft.source.after === 'move'" type="text" v-model="jobDraft.source.move_to" placeholder="pasta de destino dos processados" />
+        </template>
+        <template v-else>
+          <input type="text" v-model="jobDraft.source.db_uri_secret" placeholder="nome do segredo com a URI do banco (ex.: DB_ORIGEM)" style="font-family: var(--font-mono);" />
+          <input type="text" v-model="jobDraft.source.table_or_sql" placeholder="nome da tabela ou um SELECT" style="font-family: var(--font-mono);" />
+        </template>
+      </div>
+
+      <div class="field-block">
+        <label>Receita (passos, em JSON)</label>
+        <button class="btn tiny ghost" :disabled="!activeTab" @click="useActiveTabStepsInJob" style="align-self: flex-start;">
+          Usar os passos da aba atual{{ activeTab ? (' ("' + activeTab.name + '")') : '' }}
+        </button>
+        <textarea v-model="jobStepsJsonText" rows="6"
+                  style="font-family: var(--font-mono); font-size: 11.5px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); width: 100%; resize: vertical;"></textarea>
+      </div>
+
+      <div class="field-block">
+        <label>Destino</label>
+        <select v-model="jobDraft.destination.kind">
+          <option value="folder">Pasta</option>
+          <option value="database">Banco de dados</option>
+        </select>
+        <template v-if="jobDraft.destination.kind === 'folder'">
+          <input type="text" v-model="jobDraft.destination.path" placeholder="caminho da pasta de destino" />
+          <label>Formato</label>
+          <select v-model="jobDraft.destination.format">
+            <option value="csv">CSV</option>
+            <option value="xlsx">Excel (.xlsx)</option>
+            <option value="json">JSON</option>
+            <option value="parquet">Parquet</option>
+            <option value="dlk_open">.dlk sem criptografia</option>
+            <option value="dlk_encrypted">.dlk criptografado</option>
+          </select>
+          <label>Nome do arquivo</label>
+          <input type="text" v-model="jobDraft.destination.filename_template" style="font-family: var(--font-mono);" />
+          <p class="muted" style="font-size: 11px;">{source_name} e {timestamp} são substituídos automaticamente.</p>
+        </template>
+        <template v-else>
+          <input type="text" v-model="jobDraft.destination.db_uri_secret" placeholder="nome do segredo com a URI do banco (ex.: DB_DESTINO)" style="font-family: var(--font-mono);" />
+          <input type="text" v-model="jobDraft.destination.table" placeholder="nome da tabela de destino" />
+          <label>Modo</label>
+          <select v-model="jobDraft.destination.mode">
+            <option value="append">Adicionar às linhas existentes</option>
+            <option value="replace">Substituir a tabela inteira</option>
+            <option value="upsert">Atualizar por coluna-chave (upsert)</option>
+          </select>
+          <input v-if="jobDraft.destination.mode === 'upsert'" type="text" v-model="jobUpsertOnText" placeholder="colunas-chave, separadas por vírgula" />
+        </template>
+      </div>
+
+      <div class="field-block">
+        <label>Quando rodar</label>
+        <select v-model="jobDraft.trigger.kind">
+          <option value="manual">Só manualmente (botão "Rodar agora")</option>
+          <option value="watch">Vigiar a pasta (roda sozinha quando aparece arquivo novo)</option>
+          <option value="interval">De tempos em tempos</option>
+        </select>
+        <input v-if="jobDraft.trigger.kind === 'interval'" type="number" v-model.number="jobDraft.trigger.interval_seconds" placeholder="intervalo em segundos" />
+      </div>
+
+      <div class="field-block nested">
+        <label>Segredos (nunca gravados em disco em texto puro — veja server/README.md)</label>
+        <input type="text" v-model="jobDraft.secrets.salt" placeholder="nome do segredo do salt, ex.: SALT_FINANCEIRO" style="font-family: var(--font-mono);" />
+        <input v-if="jobDraft.destination.format === 'dlk_encrypted'" type="text" v-model="jobDraft.secrets.key"
+               placeholder="nome do segredo da chave .dlk, ex.: KEY_FINANCEIRO" style="font-family: var(--font-mono);" />
+      </div>
+
+      <p v-if="jobFormError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ jobFormError }}</p>
+    </div>
+    <div class="drawer-footer">
+      <button class="btn ghost" @click="cancelJobForm">Cancelar</button>
+      <button class="btn primary" @click="saveJob">Salvar automação</button>
+    </div>
+  </aside>
+
+  <!-- ══════════════════ MODAL: histórico de execuções ══════════════════ -->
+  <div v-if="jobRunsFor" class="modal-backdrop" @click.self="closeJobRuns">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('history')"></span> Histórico de execuções</h2>
+      <div v-if="!jobRunsList.length" class="empty-state small">Nenhuma execução registrada ainda.</div>
+      <div v-for="(run, i) in jobRunsList" :key="i" class="step-card" style="cursor: default; margin-bottom: 6px;">
+        <div class="step-body">
+          <div class="step-title">
+            {{ formatTimestamp(run.started_at) }}
+            <span class="pii-chip" :class="run.status === 'error' ? 'high' : run.status === 'partial' ? 'medium' : 'low'">{{ run.status }}</span>
+          </div>
+          <div class="step-desc muted" style="white-space: normal; font-family: var(--font-ui);">
+            <template v-if="run.note">{{ run.note }}</template>
+            <template v-else-if="run.error">{{ run.error }}</template>
+            <template v-else>
+              {{ (run.processed || []).length }} item(ns) processado(s)
+              <template v-if="(run.errors || []).length">, {{ run.errors.length }} erro(s)</template>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions"><button class="btn primary" @click="closeJobRuns">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Sobre / limites ══════════════════ -->
+  <div v-if="showAbout" class="modal-backdrop" @click.self="showAbout = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('info')"></span> Sobre {{ engineMode === 'server' ? 'o datalock Studio' : 'esta prévia' }}</h2>
+
+      <template v-if="engineMode === 'server'">
+        <p>
+          Você está usando o <strong>software completo</strong> — o motor Python
+          real (Polars + a biblioteca datalock) rodando localmente nesta máquina.
+          Nenhum dado sai daqui a menos que você mesmo configure uma conexão de
+          banco remota ou uma automação.
+        </p>
+        <ul>
+          <li>Todas as estratégias de mascaramento, incluindo <strong>criptografia
+              reversível</strong> e leitura/escrita de <strong>.dlk</strong>, estão
+              disponíveis — sem as restrições da prévia web.</li>
+          <li>Banco de dados e automações também rodam por aqui — ver os botões
+              "Banco de dados" e "Automação" na barra superior.</li>
+          <li>Os campos de Salt/chave não usam o gerenciador de senhas do
+              navegador/sistema de propósito — evita que ele ofereça salvar um
+              salt de anonimização como se fosse uma senha de login.</li>
+        </ul>
+      </template>
+
+      <template v-else>
+        <p>
+          Esta é a <strong>prévia web</strong> do datalock Studio — roda 100% no seu navegador,
+          publicada como um site estático (GitHub Pages). Nenhum dado é enviado para nenhum servidor.
+        </p>
+        <ul>
+          <li>O <strong>hash</strong> usado aqui é byte-a-byte compatível com o motor Python real (mesmo salt → mesmo token).</li>
+          <li>Mascaramento <strong>reversível</strong> (criptografia), leitura/escrita de <strong>.dlk</strong>,
+              conexão com <strong>bancos de dados</strong>, <strong>automações</strong> e volumes muito grandes
+              de dados exigem o <strong>software completo</strong> (motor Python real com Polars) — de
+              propósito, por segurança.</li>
+          <li>As funções sintéticas (número/categoria "mock") aqui são uma aproximação simples — o motor real
+              faz isso de forma estatisticamente mais fiel.</li>
+          <li>Os campos de Salt/chave não usam o gerenciador de senhas do navegador de propósito — evita que ele
+              ofereça salvar/preencher automaticamente um salt de anonimização como se fosse uma senha de login.
+              Em navegadores baseados em Chromium (Chrome, Edge, Brave), o valor fica visualmente oculto por padrão;
+              no Firefox, o texto pode ficar visível (use o botão de olho ao lado do campo para controlar manualmente).</li>
+        </ul>
+        <p>Veja o repositório para instruções de instalação do software completo.</p>
+      </template>
+      <div class="modal-actions"><button class="btn primary" @click="showAbout = false">Entendi</button></div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
