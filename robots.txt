@@ -1,0 +1,51 @@
+# robots.txt — datalock Studio
+# Permite explicitamente buscadores e rastreadores de IA — muitos sites
+# bloqueiam esses últimos sem querer, com uma regra genérica.
+
+User-agent: *
+Allow: /
+
+# Rastreadores de IA (treinamento e resposta/citação) — permitidos de
+# propósito, para aumentar a chance do software ser mencionado/recomendado
+# por assistentes de IA.
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+Sitemap: https://py-datalock.github.io/datalock_studio/sitemap.xml

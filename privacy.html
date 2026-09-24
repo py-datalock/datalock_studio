@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<!--
+  datalock Studio — Copyright © 2026 [SEU NOME/EMPRESA]. Todos os direitos
+  reservados. Software proprietário — ver LICENSE na raiz deste repositório.
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Política de Privacidade — datalock Studio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
+<link rel="stylesheet" href="css/style.css" />
+<style>
+  /* Estilos só desta página de documento — reaproveita as variáveis de
+     cor/tipografia já definidas em css/style.css (tema claro/escuro
+     automático incluído de graça, sem duplicar nada daqui). */
+  body { min-height: 100vh; }
+  .doc-topbar {
+    display: flex; align-items: center; gap: 10px; padding: 12px 20px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .doc-topbar a.brand {
+    display: flex; align-items: center; gap: 8px; font-weight: 600;
+    color: var(--text); text-decoration: none; font-size: 13.5px;
+  }
+  .doc-topbar .back {
+    margin-left: auto; font-size: 12.5px; color: var(--text-muted);
+    text-decoration: none; padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+  .doc-topbar .back:hover { background: var(--surface-sunken); color: var(--text); }
+
+  .doc-wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+  .doc-wrap h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .doc-updated { color: var(--text-faint); font-size: 12.5px; margin: 0 0 28px; }
+  .doc-wrap h2 {
+    font-size: 16.5px; font-weight: 600; margin: 36px 0 12px;
+    padding-top: 18px; border-top: 1px solid var(--border);
+  }
+  .doc-wrap h2:first-of-type { border-top: none; padding-top: 0; }
+  .doc-wrap p, .doc-wrap li { font-size: 14px; line-height: 1.7; color: var(--text); }
+  .doc-wrap p { margin: 0 0 14px; }
+  .doc-wrap ul { margin: 0 0 14px; padding-left: 22px; }
+  .doc-wrap li { margin-bottom: 8px; }
+  .doc-wrap strong { font-weight: 600; }
+  .doc-wrap code {
+    font-family: var(--font-mono); font-size: 0.92em; background: var(--surface-sunken);
+    padding: 1px 6px; border-radius: 4px;
+  }
+  .doc-wrap a { color: var(--accent); }
+  .doc-table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 13.5px; }
+  .doc-table th, .doc-table td {
+    text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border);
+  }
+  .doc-table th { font-weight: 600; color: var(--text-muted); background: var(--surface-sunken); }
+  .doc-callout {
+    background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 14px 16px; font-size: 13.5px; margin: 0 0 24px; color: var(--text);
+  }
+  .doc-note {
+    margin-top: 44px; padding-top: 20px; border-top: 1px dashed var(--border-strong);
+    font-size: 12.5px; color: var(--text-muted);
+  }
+  .doc-note h3 { font-size: 13px; color: var(--text); margin: 0 0 8px; }
+  .fill-me { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header class="doc-topbar">
+  <a class="brand" href="./index.html">🔒 datalock Studio</a>
+  <a class="back" href="./index.html">← Voltar para o app</a>
+</header>
+
+<main class="doc-wrap">
+  <h1>Política de Privacidade</h1>
+  <p class="doc-updated">Última atualização: <span class="fill-me">[DATA]</span></p>
+
+  <p class="doc-callout">
+    <strong>Resumo curto:</strong> o datalock Studio não coleta nem envia
+    os seus dados para lugar nenhum, por padrão — tanto na prévia web
+    quanto no software completo. Esta página detalha exatamente o que isso
+    significa.
+  </p>
+
+  <p>
+    Esta política descreve como o <strong>datalock Studio</strong>
+    ("o software", "nós") trata dados ao ser usado — tanto na versão que
+    roda no navegador ("prévia web") quanto na versão instalável
+    ("software completo", incluindo a distribuída pela Microsoft Store).
+  </p>
+  <p>
+    Se você tiver dúvidas sobre esta política, entre em contato:
+    <strong class="fill-me">[SEU E-MAIL OU CANAL DE CONTATO AQUI]</strong>.
+  </p>
+
+  <h2>1. Quem trata os dados, e onde</h2>
+  <p>
+    <strong class="fill-me">[SEU NOME OU EMPRESA]</strong> é quem
+    desenvolve e distribui o datalock Studio. O software é uma ferramenta
+    de <strong>uso local</strong> — os arquivos que você importa,
+    transforma e anonimiza são processados inteiramente no seu próprio
+    computador ou navegador. Nós (desenvolvedores) não temos acesso a
+    esses dados, porque eles nunca chegam até nós: não existe um servidor
+    nosso recebendo ou armazenando o que você processa no software.
+  </p>
+  <p>
+    Isso vale igualmente para a versão instalada pela Microsoft Store,
+    pelo <code>.exe</code> direto, ou usada como prévia web.
+  </p>
+
+  <h2>2. Quais dados o software manipula</h2>
+  <ul>
+    <li><strong>Arquivos que você importa</strong> (CSV, Excel, JSON,
+      Parquet, <code>.dlk</code>): ficam em memória enquanto o programa
+      está aberto, e só são gravados em disco quando você explicitamente
+      exporta um resultado ou usa uma automação configurada por você
+      mesmo.</li>
+    <li><strong>Bancos de dados</strong> (só no software completo): se
+      você configurar uma conexão, o software se conecta diretamente ao
+      banco que você informou — nenhuma credencial ou dado passa por nós
+      no meio do caminho.</li>
+    <li><strong>Preferências de interface</strong> (tema, cor,
+      densidade): salvas localmente no seu navegador/computador
+      (<code>localStorage</code>), nunca enviadas para fora. Não são
+      dados pessoais — só configurações visuais.</li>
+    <li><strong>Segredos de anonimização</strong> (salt, chave de
+      criptografia): digitados por você e usados apenas em memória
+      durante o processamento. Nas automações (software completo), esses
+      segredos podem ficar guardados localmente num arquivo de
+      configuração (<code>secrets.env</code>) que você cria e controla —
+      nunca são transmitidos para nós ou para terceiros.</li>
+  </ul>
+
+  <h2>3. O que o software NÃO faz</h2>
+  <ul>
+    <li>Não coleta estatísticas de uso, telemetria ou analytics.</li>
+    <li>Não envia os dados que você processa (ou qualquer parte deles)
+      para nenhum servidor nosso ou de terceiros.</li>
+    <li>Não usa cookies de rastreamento.</li>
+    <li>Não compartilha, vende ou monetiza dados de qualquer tipo, porque
+      não os recebemos.</li>
+  </ul>
+
+  <h2>4. Conexões de rede que o software faz</h2>
+  <p><strong>Software completo (instalado / Microsoft Store):</strong>
+    por padrão, nenhuma. O programa roda um servidor local
+    (<code>127.0.0.1</code>, acessível só pela sua própria máquina) e não
+    faz nenhuma chamada de rede para fora, a menos que você mesmo
+    configure uma conexão com banco de dados remoto ou uma automação
+    cuja origem/destino seja remota — nesses casos, a conexão é feita
+    diretamente do seu computador para o destino configurado, nunca
+    passando por nós.</p>
+  <p><strong>Prévia web:</strong> por rodar num navegador, a prévia
+    carrega algumas bibliotecas de terceiros por CDN, necessárias para
+    funcionar:</p>
+  <table class="doc-table">
+    <thead><tr><th>Serviço</th><th>O que carrega</th><th>Política de privacidade</th></tr></thead>
+    <tbody>
+      <tr><td>Google Fonts</td><td>As fontes usadas na interface</td>
+        <td><a href="https://policies.google.com/privacy" target="_blank" rel="noopener">policies.google.com/privacy</a></td></tr>
+      <tr><td>cdnjs (Cloudflare)</td><td>Vue.js, PapaParse, SheetJS</td>
+        <td><a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">cloudflare.com/privacypolicy</a></td></tr>
+    </tbody>
+  </table>
+  <p>
+    Essas requisições expõem ao provedor (Google/Cloudflare) informações
+    técnicas padrão de qualquer requisição web (como seu endereço IP) — o
+    mesmo que aconteceria em praticamente qualquer site que usa fontes ou
+    bibliotecas hospedadas externamente. <strong>Os dados que você importa
+    e processa dentro da prévia não são enviados a esses serviços</strong>
+    — só os arquivos estáticos da própria interface são carregados de lá.
+  </p>
+
+  <h2>5. Anonimização e segurança dos dados</h2>
+  <p>
+    O propósito central do software é justamente proteger dados pessoais
+    — as funções de mascaramento, criptografia e detecção de PII existem
+    para isso. Detalhes técnicos de como cada método funciona estão
+    documentados no Manual de Uso e Metodologia do projeto.
+  </p>
+
+  <h2>6. Retenção de dados</h2>
+  <p>
+    Não aplicável da nossa parte — como não recebemos nem armazenamos
+    seus dados, não há nada para retermos ou apagarmos. A retenção dos
+    arquivos que você processa é inteiramente controlada por você, no seu
+    próprio computador.
+  </p>
+
+  <h2>7. Direitos do titular dos dados (LGPD/GDPR)</h2>
+  <p>
+    Como o software não processa dados pessoais em nome de terceiros nem
+    os centraliza em nenhum sistema nosso, a maioria dos direitos
+    previstos na LGPD (Lei 13.709/2018) e no GDPR — acesso, correção,
+    exclusão, portabilidade — não se aplicam a nós como operadores,
+    porque nunca chegamos a deter esses dados. Se você usa o software
+    para tratar dados pessoais de terceiros (ex.: uma base de clientes da
+    sua empresa), <strong>você é o controlador desses dados</strong> para
+    efeitos legais, e as obrigações da LGPD/GDPR recaem sobre sua
+    organização, não sobre o desenvolvedor deste software.
+  </p>
+
+  <h2>8. Crianças</h2>
+  <p>
+    O software não é direcionado a menores de idade e não coleta
+    intencionalmente dados de crianças.
+  </p>
+
+  <h2>9. Alterações a esta política</h2>
+  <p>
+    Esta política pode ser atualizada eventualmente — a data no topo
+    desta página indica a versão mais recente. Mudanças significativas
+    serão refletidas na ficha do software na Microsoft Store (ou onde
+    estiver distribuído) antes de entrarem em vigor.
+  </p>
+
+  <h2>10. Contato</h2>
+  <p>
+    Dúvidas, solicitações ou preocupações sobre esta política:
+    <strong class="fill-me">[SEU E-MAIL OU CANAL DE CONTATO AQUI]</strong>
+  </p>
+
+</main>
+
+</body>
+</html>

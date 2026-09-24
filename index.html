@@ -4,6 +4,51 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>datalock Studio — anonimização e manipulação de dados sem código</title>
+<meta name="description" content="Interface no-code (apontar e clicar) para limpar, cruzar e anonimizar dados pessoais como CPF, CNPJ e e-mail — sem escrever código. Detecção automática de dados pessoais, mascaramento com hash irreversível ou criptografia reversível, conexão com bancos de dados e automações. Roda no navegador ou como software local, sem enviar dados para a nuvem." />
+<meta name="keywords" content="anonimização de dados, mascaramento de dados, LGPD, GDPR, no-code, ETL, limpeza de dados, dados pessoais, CPF, privacidade" />
+<meta name="author" content="[SEU NOME OU EMPRESA]" />
+<link rel="canonical" href="https://py-datalock.github.io/datalock_studio/" />
+
+<!-- Open Graph (Facebook, LinkedIn, WhatsApp, Discord...) -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="datalock Studio — anonimização de dados sem código" />
+<meta property="og:description" content="Ferramenta no-code para limpar, cruzar e anonimizar dados pessoais (CPF, CNPJ, e-mail) — detecção automática, hash irreversível, criptografia reversível, bancos de dados e automações. 100% local." />
+<meta property="og:url" content="https://py-datalock.github.io/datalock_studio/" />
+<meta property="og:locale" content="pt_BR" />
+<meta property="og:site_name" content="datalock Studio" />
+
+<!-- Twitter/X Card -->
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="datalock Studio — anonimização de dados sem código" />
+<meta name="twitter:description" content="Interface no-code para limpar e anonimizar dados pessoais — sem escrever código, sem enviar dados para a nuvem." />
+
+<!-- Dados estruturados (schema.org) — ajuda buscadores e IAs a entender
+     "o que é isto" de forma inequívoca, sem depender de JS -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "datalock Studio",
+  "description": "Interface no-code para limpar, cruzar e anonimizar dados pessoais (CPF, CNPJ, e-mail, telefone) sem escrever código. Detecção automática de dados pessoais, mascaramento com hash irreversível ou criptografia reversível, conexão com bancos de dados e automações. Processa tudo localmente, sem enviar dados para a nuvem.",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web, Windows",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "featureList": [
+    "Detecção automática de CPF, CNPJ, e-mail, telefone e CEP",
+    "Mascaramento com hash irreversível (anonimização LGPD/GDPR)",
+    "Criptografia reversível (pseudonimização) com controle de chave",
+    "Filtrar, ordenar, agrupar, tabela dinâmica, colunas calculadas",
+    "Conexão com bancos de dados (leitura e escrita)",
+    "Automações de pasta/banco de dados sem código",
+    "Processamento 100% local, sem envio de dados para terceiros"
+  ]
+}
+</script>
+
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
 <link rel="stylesheet" href="css/style.css" />
 
@@ -13,6 +58,29 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
+
+<!-- Conteúdo visível para rastreadores/navegadores SEM JavaScript (a
+     maioria dos rastreadores de IA faz fetch puro, sem executar JS — sem
+     isto, eles veriam a página em branco, já que o app inteiro roda via
+     Vue). Some da tela assim que o app carrega. -->
+<noscript>
+  <div style="max-width: 640px; margin: 60px auto; padding: 20px; font-family: sans-serif; line-height: 1.6;">
+    <h1>datalock Studio</h1>
+    <p>
+      Interface no-code (apontar e clicar) para limpar, cruzar e anonimizar
+      dados pessoais — CPF, CNPJ, e-mail, telefone — sem escrever código.
+    </p>
+    <p>
+      Detecta dados pessoais automaticamente, mascara com hash irreversível
+      (anonimização de verdade, conforme LGPD/GDPR) ou criptografia
+      reversível (pseudonimização, com controle de chave), filtra, ordena,
+      agrupa, cruza com bancos de dados, e roda automações sem programar
+      nada. Todo o processamento acontece localmente — nenhum dado é
+      enviado para a nuvem.
+    </p>
+    <p>Esta página exige JavaScript habilitado para funcionar de verdade.</p>
+  </div>
+</noscript>
 
 <div id="app" v-cloak>
 

@@ -1,0 +1,26 @@
+# datalock Studio
+
+> Interface no-code (apontar e clicar, sem escrever código) para limpar,
+> cruzar e anonimizar dados pessoais — CPF, CNPJ, e-mail, telefone. Detecta
+> dados pessoais automaticamente, mascara com hash irreversível (anonimização
+> conforme LGPD/GDPR) ou criptografia reversível (pseudonimização com controle
+> de chave), filtra, ordena, agrupa, conecta com bancos de dados, e roda
+> automações sem programar. Existe como prévia web (roda no navegador) e como
+> software completo para Windows (motor Python real, com Polars). Todo o
+> processamento acontece localmente — nenhum dado é enviado para a nuvem.
+
+Palavras-chave: anonimização de dados, mascaramento de dados, LGPD, GDPR,
+ETL no-code, limpeza de dados, ferramenta de privacidade, hash
+determinístico, pseudonimização, banco de dados, automação de dados.
+
+## Páginas
+
+- [Prévia web](https://py-datalock.github.io/datalock_studio/): a própria
+  ferramenta, rodando no navegador.
+- [Política de privacidade](https://py-datalock.github.io/datalock_studio/privacy.html)
+
+## Para quem é
+
+Analistas de dados, DBAs, times de privacidade/compliance, e qualquer
+pessoa que precise preparar ou proteger uma base de dados sem depender de
+alguém que programe.
