@@ -1,4 +1,7 @@
-# datalock Studio — Prévia web
+# datalock Studio, Prévia web
+
+**Já está publicada em https://datalock-studio.tech.** Esta pasta é o
+código fonte dela, caso queira publicar sua própria cópia.
 
 Site estático, sem build step, sem dependências de servidor. Publica no
 GitHub Pages em poucos passos.

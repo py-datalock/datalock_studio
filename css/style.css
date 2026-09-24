@@ -314,6 +314,8 @@ body {
 .grid-meta { font-size: 11.5px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; color: var(--text-muted); }
 .grid-meta strong { color: var(--text); font-weight: 600; }
 .running-badge { color: var(--warn); animation: dl-pulse 1.2s ease-in-out infinite; }
+.pagination-controls { display: flex; align-items: center; gap: 6px; }
+.pagination-controls { display: flex; align-items: center; gap: 4px; }
 .error-badge {
   color: var(--danger); background: var(--danger-soft); padding: 2px 8px; border-radius: 999px;
   font-size: 11px; max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

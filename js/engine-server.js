@@ -92,7 +92,10 @@ export async function uploadFile(file, key = null) {
  * uma prévia paginada do resultado + trace por step.
  */
 export async function runRecipe(sessionId, steps, context = {}) {
-  return postJson("/pipeline/run", { session_id: sessionId, steps, salt: context.salt || null });
+  return postJson("/pipeline/run", {
+    session_id: sessionId, steps, salt: context.salt || null,
+    offset: context.offset || 0, search: context.search || null,
+  });
 }
 
 /** dd.scan(df)/dd.profile(df) reais. */
@@ -215,6 +218,89 @@ export async function jobRuns(jobId) {
   const res = await fetch(`${baseUrl}/jobs/${jobId}/runs`);
   if (!res.ok) throw new Error("Falha ao buscar o histórico.");
   return (await res.json()).runs;
+}
+
+// ── Exploração de dados, relatório LGPD, ferramentas .dlk, varredura ──────
+
+export async function complianceReport(sessionId, steps, salt, options) {
+  const res = await fetch(`${baseUrl}/pii/compliance-report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, steps, salt, ...options }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || "Falha ao gerar o relatório.");
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  return { blob, filename: match ? match[1] : "relatorio_lgpd" };
+}
+
+export async function privacyMetrics(sessionId, steps, salt, options) {
+  return postJson("/pii/privacy-metrics", { session_id: sessionId, steps, salt, ...options });
+}
+
+export async function pipelineDiff(sessionId, steps, salt) {
+  return postJson("/pipeline/diff", { session_id: sessionId, steps, salt });
+}
+
+export async function dlkInspect(file, key) {
+  const form = new FormData();
+  form.append("file", file);
+  if (key) form.append("key", key);
+  const res = await fetch(`${baseUrl}/dlk/inspect`, { method: "POST", body: form });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || "Falha ao inspecionar o arquivo.");
+  }
+  return res.json();
+}
+
+export async function dlkRekey(file, oldKey, newKey) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("old_key", oldKey);
+  form.append("new_key", newKey);
+  const res = await fetch(`${baseUrl}/dlk/rekey`, { method: "POST", body: form });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || "Falha ao trocar a chave.");
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  return { blob, filename: match ? match[1] : "rekeyed.dlk" };
+}
+
+export async function scanDirectory(path, options) {
+  return postJson("/scan-directory", { path, ...options });
+}
+
+// ── Trilha de auditoria ─────────────────────────────────────────────────
+
+export async function auditConfigure(enabled, path, webhook) {
+  return postJson("/audit/configure", { enabled, path: path || null, webhook: webhook || null });
+}
+
+export async function auditStatus() {
+  const res = await fetch(`${baseUrl}/audit/status`);
+  if (!res.ok) throw new Error("Falha ao consultar o status da auditoria.");
+  return res.json();
+}
+
+export async function auditLog() {
+  const res = await fetch(`${baseUrl}/audit/log`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || "Falha ao buscar a trilha de auditoria.");
+  }
+  return res.json();
+}
+
+export async function auditSave(path, auditKey) {
+  return postJson("/audit/save", { path, audit_key: auditKey || null });
 }
 
 export const engineInfo = {

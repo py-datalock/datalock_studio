@@ -15,9 +15,9 @@ determinístico, pseudonimização, banco de dados, automação de dados.
 
 ## Páginas
 
-- [Prévia web](https://py-datalock.github.io/datalock_studio/): a própria
+- [Prévia web](https://datalock-studio.tech/): a própria
   ferramenta, rodando no navegador.
-- [Política de privacidade](https://py-datalock.github.io/datalock_studio/privacy.html)
+- [Política de privacidade](https://datalock-studio.tech/privacy.html)
 
 ## Para quem é
 

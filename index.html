@@ -7,13 +7,13 @@
 <meta name="description" content="Interface no-code (apontar e clicar) para limpar, cruzar e anonimizar dados pessoais como CPF, CNPJ e e-mail — sem escrever código. Detecção automática de dados pessoais, mascaramento com hash irreversível ou criptografia reversível, conexão com bancos de dados e automações. Roda no navegador ou como software local, sem enviar dados para a nuvem." />
 <meta name="keywords" content="anonimização de dados, mascaramento de dados, LGPD, GDPR, no-code, ETL, limpeza de dados, dados pessoais, CPF, privacidade" />
 <meta name="author" content="[SEU NOME OU EMPRESA]" />
-<link rel="canonical" href="https://py-datalock.github.io/datalock_studio/" />
+<link rel="canonical" href="https://datalock-studio.tech/" />
 
 <!-- Open Graph (Facebook, LinkedIn, WhatsApp, Discord...) -->
 <meta property="og:type" content="website" />
 <meta property="og:title" content="datalock Studio — anonimização de dados sem código" />
 <meta property="og:description" content="Ferramenta no-code para limpar, cruzar e anonimizar dados pessoais (CPF, CNPJ, e-mail) — detecção automática, hash irreversível, criptografia reversível, bancos de dados e automações. 100% local." />
-<meta property="og:url" content="https://py-datalock.github.io/datalock_studio/" />
+<meta property="og:url" content="https://datalock-studio.tech/" />
 <meta property="og:locale" content="pt_BR" />
 <meta property="og:site_name" content="datalock Studio" />
 
@@ -108,6 +108,18 @@
               @click="openJobsPanel">
         <span class="icon" v-html="icon('zap')"></span> Automação
       </button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openDlkToolsPanel">
+        <span class="icon" v-html="icon('shield-key')"></span> Ferramentas .dlk
+      </button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openScanDirPanel">
+        <span class="icon" v-html="icon('folder')"></span> Varrer pasta
+      </button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openAuditPanel">
+        <span class="icon" v-html="icon('history')"></span> Auditoria
+      </button>
       <button class="btn ghost" @click="showAbout = true">
         <span class="icon" v-html="icon('info')"></span> Sobre / limites
       </button>
@@ -161,6 +173,8 @@
       <span class="sep"></span>
       <button class="btn ghost" @click="showPiiPanel = true"><span class="icon" v-html="icon('search')"></span> Detectar dados pessoais</button>
       <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+              @click="openDiffPanel"><span class="icon" v-html="icon('history')"></span> Ver o que mudou</button>
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
               @click="openUnmaskPanel"><span class="icon" v-html="icon('key')"></span> Reverter mascaramento</button>
       <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
               @click="openDbPanel"><span class="icon" v-html="icon('database')"></span> Banco de dados</button>
@@ -211,6 +225,24 @@
           <span v-if="activeTab.errorMessage" class="error-badge" :title="activeTab.errorMessage">
             <span class="icon" v-html="icon('alert', {size: 13})"></span> {{ activeTab.errorMessage }}
           </span>
+          <span style="flex: 1;"></span>
+          <div class="secret-field" style="max-width: 220px;">
+            <span class="icon" v-html="icon('search', {size: 14})" style="padding-left: 8px; color: var(--text-faint);"></span>
+            <input id="grid-search-input" ref="gridSearchInput" type="text" v-model="activeTab.gridSearch" @input="gridSearchChanged"
+                   placeholder="Buscar na tabela (Ctrl+F)" style="padding-left: 4px;" />
+          </div>
+          <div class="pagination-controls">
+            <button class="icon-btn" :disabled="activeTab.gridOffset <= 0" @click="gridPrevPage" title="Página anterior">
+              <span class="icon" v-html="icon('arrow-left', {size: 14})"></span>
+            </button>
+            <span class="muted" style="font-size: 11px; white-space: nowrap;">
+              {{ activeTab.filteredRows ? (activeTab.gridOffset + 1) : 0 }}–{{ Math.min(activeTab.gridOffset + GRID_PAGE_SIZE, activeTab.filteredRows) }}
+              de {{ activeTab.filteredRows.toLocaleString('pt-BR') }}
+            </span>
+            <button class="icon-btn" :disabled="activeTab.gridOffset + GRID_PAGE_SIZE >= activeTab.filteredRows" @click="gridNextPage" title="Próxima página">
+              <span class="icon" v-html="icon('arrow-right', {size: 14})"></span>
+            </button>
+          </div>
         </div>
         <div class="grid-scroll">
           <table class="data-grid" v-if="activeTab.previewRows.length">
@@ -244,9 +276,17 @@
       <aside class="steps-panel">
         <div class="steps-header">
           <strong>Passos aplicados</strong>
-          <button class="btn tiny primary" @click="openStepPicker">
-            <span class="icon" v-html="icon('plus', {size: 13})"></span> Adicionar
-          </button>
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <button class="icon-btn" :disabled="!activeTab.undoStack.length" @click="undoStep" title="Desfazer (Ctrl+Z)">
+              <span class="icon" v-html="icon('arrow-left', {size: 14})"></span>
+            </button>
+            <button class="icon-btn" :disabled="!activeTab.redoStack.length" @click="redoStep" title="Refazer (Ctrl+Y)">
+              <span class="icon" v-html="icon('arrow-right', {size: 14})"></span>
+            </button>
+            <button class="btn tiny primary" @click="openStepPicker">
+              <span class="icon" v-html="icon('plus', {size: 13})"></span> Adicionar
+            </button>
+          </div>
         </div>
         <div class="steps-list">
           <div v-if="!activeTab.steps.length" class="empty-state small">
@@ -577,6 +617,100 @@
         </p>
       </div>
 
+      <!-- describe -->
+      <div v-if="draftStep.type === 'describe'" class="field-block">
+        <p class="muted">Gera uma tabela com contagem, média, desvio padrão, mínimo, máximo e percentis (25/50/75%) de cada coluna numérica — sem nenhuma opção a configurar.</p>
+      </div>
+
+      <!-- value_counts -->
+      <div v-if="draftStep.type === 'value_counts'" class="field-block">
+        <label>Coluna</label>
+        <select v-model="draftStep.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <label class="checkbox-row"><input type="checkbox" v-model="draftStep.normalize" /> Mostrar como proporção (%) em vez de contagem</label>
+        <label>Quantos valores mostrar (os mais frequentes)</label>
+        <input type="number" v-model.number="draftStep.n" min="1" />
+      </div>
+
+      <!-- corr -->
+      <div v-if="draftStep.type === 'corr'" class="field-block">
+        <label>Método</label>
+        <select v-model="draftStep.method">
+          <option value="pearson">Pearson (relação linear)</option>
+          <option value="spearman">Spearman (relação por ordem/ranking)</option>
+        </select>
+      </div>
+
+      <!-- explode -->
+      <div v-if="draftStep.type === 'explode'" class="field-block">
+        <label>Coluna com listas</label>
+        <select v-model="draftStep.column"><option v-for="c in activeTab.columns" :key="c" :value="c">{{ c }}</option></select>
+        <p class="muted">Cada item da lista vira uma linha própria, repetindo as demais colunas.</p>
+      </div>
+
+      <!-- shift_step -->
+      <div v-if="draftStep.type === 'shift_step'" class="field-block">
+        <label>Tipo</label>
+        <select v-model="draftStep.kind">
+          <option value="shift">Deslocar (shift)</option>
+          <option value="lag">Valor anterior (lag)</option>
+          <option value="lead">Próximo valor (lead)</option>
+        </select>
+        <label>Quantas posições</label>
+        <input type="number" v-model.number="draftStep.periods" min="1" />
+        <label>Colunas (vazio = todas as numéricas)</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.columns" /> {{ col }}
+          </label>
+        </div>
+      </div>
+
+      <!-- melt -->
+      <div v-if="draftStep.type === 'melt'" class="field-block">
+        <label>Colunas a manter como identificador</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.id_cols" /> {{ col }}
+          </label>
+        </div>
+        <label>Colunas a transformar em linhas (vazio = todas as demais)</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.value_cols" /> {{ col }}
+          </label>
+        </div>
+      </div>
+
+      <!-- find_replace -->
+      <div v-if="draftStep.type === 'find_replace'" class="field-block">
+        <label>Colunas (vazio aplica em todas)</label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="draftStep.columns" /> {{ col }}
+          </label>
+        </div>
+        <label>Buscar</label>
+        <input type="text" v-model="draftStep.find" placeholder="texto a procurar" />
+        <label>Substituir por</label>
+        <input type="text" v-model="draftStep.replace" placeholder="texto novo (vazio remove o trecho encontrado)" />
+        <label class="checkbox-row"><input type="checkbox" v-model="draftStep.regex" /> Tratar o campo "Buscar" como expressão regular</label>
+      </div>
+
+      <!-- synthetic -->
+      <div v-if="draftStep.type === 'synthetic'" class="field-block">
+        <p class="muted">
+          Precisa de pelo menos 100 linhas na tabela atual (o ideal é 500 ou mais).
+          Este passo pode demorar alguns minutos, dependendo do tamanho dos dados.
+          Exige a dependência opcional "ctgan" instalada no software completo.
+        </p>
+        <label>Quantas linhas gerar (vazio usa o mesmo total da tabela atual)</label>
+        <input type="number" v-model.number="draftStep.n" min="1" placeholder="ex.: 1000" />
+        <label>Épocas de treinamento (mais épocas, mais fiel e mais lento)</label>
+        <input type="number" v-model.number="draftStep.epochs" min="1" />
+        <label class="checkbox-row"><input type="checkbox" v-model="draftStep.mask_result" /> Mascarar o resultado também (recomendado)</label>
+        <input v-if="draftStep.mask_result" type="text" v-model="draftStep.salt" placeholder="salt para o mascaramento" style="font-family: var(--font-mono);" />
+      </div>
+
     </div>
     <div class="drawer-footer">
       <button class="btn ghost" @click="cancelStepEdit">Cancelar</button>
@@ -603,7 +737,209 @@
         </tbody>
       </table>
       <p v-else>Nenhuma coluna com padrão de dado pessoal foi detectada na amostra.</p>
+
+      <template v-if="engineMode === 'server'">
+        <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
+          <label>Relatório de conformidade LGPD</label>
+          <input type="text" v-model="complianceOrg" placeholder="nome da organização (opcional)" />
+          <input type="text" v-model="complianceDataset" placeholder="nome do dataset (opcional)" />
+          <select v-model="complianceFormat">
+            <option value="html">HTML</option>
+            <option value="json">JSON</option>
+            <option value="pdf">PDF (exige weasyprint no software)</option>
+          </select>
+          <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+            <button class="btn tiny primary" @click="generateComplianceReport">Gerar e baixar</button>
+          </div>
+          <p v-if="complianceError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ complianceError }}</p>
+        </div>
+
+        <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
+          <label>Avaliação avançada de privacidade</label>
+          <p class="muted" style="font-size: 11.5px;">Marque as colunas quasi-identificadoras (ex.: UF, idade, escolaridade) para calcular k-anonimato e risco de reidentificação.</p>
+          <div class="checkbox-list">
+            <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+              <input type="checkbox" :value="col" v-model="privacyQuasiIds" /> {{ col }}
+            </label>
+          </div>
+          <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+            <button class="btn tiny primary" @click="runPrivacyMetrics">Avaliar</button>
+          </div>
+          <p v-if="privacyMetricsError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ privacyMetricsError }}</p>
+          <div v-if="privacyMetricsResult" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+            <div class="grid-meta">
+              <strong>k-anonimato:</strong> k = {{ privacyMetricsResult.kanon.k_anonymity.k_value }}
+              <span class="pii-chip" :class="privacyMetricsResult.kanon.compliant_anpd ? 'low' : 'high'">
+                {{ privacyMetricsResult.kanon.compliant_anpd ? 'conforme ANPD (k≥5)' : 'abaixo de k≥5' }}
+              </span>
+            </div>
+            <div class="grid-meta">
+              <strong>Risco de reidentificação:</strong> {{ (privacyMetricsResult.risk.risk_score * 100).toFixed(0) }}%
+              <span class="pii-chip" :class="{very_low:'low',low:'low',moderate:'medium',high:'high',critical:'high'}[privacyMetricsResult.risk.risk_level] || 'medium'">
+                {{ privacyMetricsResult.risk.risk_level }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <div class="modal-actions"><button class="btn primary" @click="showPiiPanel = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: O que mudou (diff) ══════════════════ -->
+  <div v-if="showDiffPanel && activeTab" class="modal-backdrop" @click.self="showDiffPanel = false">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('history')"></span> O que mudou</h2>
+      <p class="muted">Compara a tabela original (antes de qualquer passo) com o resultado atual da receita.</p>
+      <p v-if="diffError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ diffError }}</p>
+      <div v-if="diffResult">
+        <p><strong>{{ diffResult.summary }}</strong></p>
+        <table class="pii-table">
+          <thead><tr><th>Coluna</th><th>Mudou?</th></tr></thead>
+          <tbody>
+            <tr v-for="col in diffResult.columns_changed" :key="'ch-'+col">
+              <td>{{ col }}</td><td><span class="pii-chip high">alterada</span></td>
+            </tr>
+            <tr v-for="col in diffResult.columns_unchanged" :key="'un-'+col">
+              <td>{{ col }}</td><td><span class="pii-chip low">igual</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions"><button class="btn primary" @click="showDiffPanel = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Ferramentas .dlk (inspecionar / trocar chave) ══════════════════ -->
+  <div v-if="showDlkToolsPanel" class="modal-backdrop" @click.self="showDlkToolsPanel = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('shield-key')"></span> Ferramentas .dlk</h2>
+
+      <div class="field-block">
+        <label>Inspecionar (ver metadados sem abrir a tabela)</label>
+        <input ref="dlkInspectFileInput" type="file" accept=".dlk" @change="onDlkInspectFilePicked" />
+        <div class="secret-field">
+          <input type="text" :class="{ 'secret-mask': !dlkInspectKeyVisible }" v-model="dlkInspectKey"
+                 placeholder="chave (se o arquivo for criptografado)"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                 data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other" name="dl_inspect_key_field" />
+          <button class="icon-btn" type="button" @click="dlkInspectKeyVisible = !dlkInspectKeyVisible">
+            <span class="icon" v-html="icon(dlkInspectKeyVisible ? 'eye-off' : 'eye', {size: 15})"></span>
+          </button>
+        </div>
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn tiny primary" :disabled="!dlkInspectFile" @click="doDlkInspect">Inspecionar</button>
+        </div>
+        <p v-if="dlkInspectError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ dlkInspectError }}</p>
+        <table class="pii-table" v-if="dlkInspectResult">
+          <tbody>
+            <tr v-for="(v, k) in dlkInspectResult" :key="k"><td>{{ k }}</td><td>{{ typeof v === 'object' ? JSON.stringify(v) : v }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
+        <label>Trocar chave de criptografia</label>
+        <input ref="dlkRekeyFileInput" type="file" accept=".dlk" @change="onDlkRekeyFilePicked" />
+        <input type="text" v-model="dlkRekeyOldKey" placeholder="chave atual" class="secret-mask" style="padding:7px 9px; border:1px solid var(--border); border-radius:var(--radius-sm);" autocomplete="off" data-lpignore="true" />
+        <input type="text" v-model="dlkRekeyNewKey" placeholder="chave nova" class="secret-mask" style="padding:7px 9px; border:1px solid var(--border); border-radius:var(--radius-sm);" autocomplete="off" data-lpignore="true" />
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn tiny primary" :disabled="!dlkRekeyFile" @click="doDlkRekey">Trocar chave e baixar</button>
+        </div>
+        <p v-if="dlkRekeyError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ dlkRekeyError }}</p>
+        <p v-if="dlkRekeySuccess" class="warn-text" style="color: var(--success);"><span class="icon" v-html="icon('check', {size: 13})"></span> {{ dlkRekeySuccess }}</p>
+      </div>
+
+      <div class="modal-actions"><button class="btn ghost" @click="showDlkToolsPanel = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Varrer pasta inteira ══════════════════ -->
+  <div v-if="showScanDirPanel" class="modal-backdrop" @click.self="showScanDirPanel = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('folder')"></span> Varrer pasta inteira</h2>
+      <p class="muted">Procura dados pessoais em todos os arquivos de uma pasta (CSV, Excel, JSON, Parquet, .dlk).</p>
+      <div class="field-block">
+        <label>Caminho da pasta</label>
+        <input type="text" v-model="scanDirPath" placeholder="ex.: C:\dados\clientes" style="font-family: var(--font-mono);" />
+        <label class="checkbox-row"><input type="checkbox" v-model="scanDirRecursive" /> Incluir subpastas</label>
+        <label>Risco mínimo a mostrar</label>
+        <select v-model="scanDirMinRisk">
+          <option :value="null">Todos</option>
+          <option value="low">Baixo ou mais</option>
+          <option value="medium">Médio ou mais</option>
+          <option value="high">Só alto</option>
+        </select>
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn primary" @click="doScanDirectory">Varrer</button>
+        </div>
+      </div>
+      <p v-if="scanDirError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ scanDirError }}</p>
+      <div v-if="scanDirResult">
+        <p class="muted">{{ scanDirResult.n_files_scanned }} arquivo(s) varrido(s) em {{ scanDirResult.elapsed_s.toFixed(2) }}s.</p>
+        <table class="pii-table">
+          <thead><tr><th>Arquivo</th><th>Risco</th><th>Colunas com PII</th></tr></thead>
+          <tbody>
+            <tr v-for="(fi, path) in scanDirResult.files" :key="path">
+              <td>{{ path.split(/[\\/]/).pop() }}</td>
+              <td><span class="pii-chip" :class="fi.max_risk">{{ fi.max_risk }}</span></td>
+              <td>{{ Object.keys(fi.pii_columns || {}).join(', ') || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions"><button class="btn ghost" @click="showScanDirPanel = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ PAINEL: Trilha de auditoria ══════════════════ -->
+  <div v-if="showAuditPanel" class="modal-backdrop" @click.self="showAuditPanel = false">
+    <div class="modal wide">
+      <h2><span class="icon" v-html="icon('history')"></span> Trilha de auditoria</h2>
+      <p class="muted">Registra automaticamente cada mascaramento, com data e coluna — útil como evidência de conformidade.</p>
+
+      <div class="field-block">
+        <label class="checkbox-row"><input type="checkbox" v-model="auditEnabled" /> Ativar a trilha de auditoria</label>
+        <template v-if="auditEnabled">
+          <label>Pasta para gravar automaticamente (opcional)</label>
+          <input type="text" v-model="auditPath" placeholder="ex.: C:\auditoria" style="font-family: var(--font-mono);" />
+          <label>Webhook — recebe cada evento via HTTP (opcional)</label>
+          <input type="text" v-model="auditWebhook" placeholder="https://..." style="font-family: var(--font-mono);" />
+        </template>
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn tiny primary" @click="applyAuditConfig">Aplicar</button>
+        </div>
+        <p v-if="auditConfigError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ auditConfigError }}</p>
+      </div>
+
+      <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;" v-if="auditEnabled">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <label style="margin: 0;">Eventos registrados nesta sessão</label>
+          <button class="icon-btn" @click="refreshAuditLog" title="Atualizar"><span class="icon" v-html="icon('refresh-cw', {size: 14})"></span></button>
+        </div>
+        <p v-if="auditLogError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ auditLogError }}</p>
+        <table class="pii-table" v-if="auditLogEntries.length">
+          <thead><tr><th>Quando</th><th>Coluna</th><th>Técnica</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr v-for="(e, i) in auditLogEntries" :key="i">
+              <td>{{ e.timestamp }}</td><td>{{ e.column }}</td><td>{{ e.technique }}</td>
+              <td><span class="pii-chip" :class="e.status === 'success' ? 'low' : 'high'">{{ e.status }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="muted">Nenhum evento ainda — faça um mascaramento para ver aparecer aqui.</p>
+
+        <label style="margin-top: 8px;">Salvar em arquivo (assinado, à prova de adulteração)</label>
+        <input type="text" v-model="auditSavePath" placeholder="caminho do arquivo .json" style="font-family: var(--font-mono);" />
+        <input type="text" v-model="auditSaveKey" placeholder="chave de assinatura (opcional, recomendado)" style="font-family: var(--font-mono);" />
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn tiny primary" @click="doAuditSave">Salvar</button>
+        </div>
+        <p v-if="auditSaveSuccess" class="warn-text" style="color: var(--success);"><span class="icon" v-html="icon('check', {size: 13})"></span> {{ auditSaveSuccess }}</p>
+      </div>
+
+      <div class="modal-actions"><button class="btn ghost" @click="showAuditPanel = false">Fechar</button></div>
     </div>
   </div>
 

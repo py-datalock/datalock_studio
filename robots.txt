@@ -48,4 +48,4 @@ Allow: /
 User-agent: Bytespider
 Allow: /
 
-Sitemap: https://py-datalock.github.io/datalock_studio/sitemap.xml
+Sitemap: https://datalock-studio.tech/sitemap.xml

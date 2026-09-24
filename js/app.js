@@ -36,6 +36,14 @@ const STEP_TYPES = [
   { type: "groupby", icon: "bar-chart", name: "Agrupar e agregar", desc: "Agrupa linhas e calcula somas/médias/contagens" },
   { type: "pivot", icon: "grid", name: "Tabela dinâmica (pivot)", desc: "Transforma valores de uma coluna em novas colunas" },
   { type: "mask", icon: "shield", name: "Mascarar / anonimizar", desc: "Aplica uma técnica de anonimização a uma coluna" },
+  { type: "describe", icon: "info", name: "Resumo estatístico", desc: "Média, desvio padrão, mínimo, máximo e percentis de cada coluna numérica" },
+  { type: "value_counts", icon: "bar-chart", name: "Contar valores", desc: "Frequência de cada valor distinto de uma coluna" },
+  { type: "corr", icon: "grid", name: "Matriz de correlação", desc: "Correlação entre as colunas numéricas" },
+  { type: "explode", icon: "layers", name: "Desdobrar lista em linhas", desc: "Expande uma coluna com listas em várias linhas" },
+  { type: "shift_step", icon: "arrow-updown", name: "Deslocar valores", desc: "Compara com a linha anterior/seguinte (lag/lead)" },
+  { type: "melt", icon: "repeat", name: "Despivotar (melt)", desc: "Transforma colunas em linhas — o inverso da tabela dinâmica" },
+  { type: "find_replace", icon: "search", name: "Buscar e substituir", desc: "Troca um texto por outro em uma ou mais colunas, com opção de expressão regular." },
+  { type: "synthetic", icon: "sparkles", name: "Gerar dados sintéticos", desc: "Cria uma tabela nova com a mesma distribuição estatística, sem usar os valores originais." },
 ];
 
 function defaultStepFor(type) {
@@ -55,6 +63,14 @@ function defaultStepFor(type) {
     case "groupby": return { ...base, by: [], aggregations: [] };
     case "pivot": return { ...base, index: null, on: null, values: null, agg_fn: "sum" };
     case "mask": return { ...base, columns: [], strategy: "hash", rows: null, piiKindByColumn: {} };
+    case "describe": return { ...base };
+    case "value_counts": return { ...base, column: null, normalize: false, n: 20 };
+    case "corr": return { ...base, method: "pearson" };
+    case "explode": return { ...base, column: null };
+    case "shift_step": return { ...base, kind: "shift", periods: 1, columns: [] };
+    case "melt": return { ...base, id_cols: [], value_cols: [] };
+    case "find_replace": return { ...base, columns: [], find: "", replace: "", regex: false };
+    case "synthetic": return { ...base, n: null, epochs: 30, mask_result: false, salt: "" };
     default: return base;
   }
 }
@@ -64,6 +80,8 @@ function newTab(name, { tableId, columns, previewRows, totalRows }) {
     id: newTabId(), tableId, name,
     columns, previewRows, totalRows,
     steps: [], running: false, errorMessage: "", piiReport: {},
+    gridOffset: 0, gridSearch: "", filteredRows: totalRows,
+    undoStack: [], redoStack: [],
   });
 }
 
@@ -199,6 +217,173 @@ createApp({
     const draftStep = ref(null);
     const editingIndex = ref(null);
     const showPiiPanel = ref(false);
+    const complianceOrg = ref("");
+    const complianceDataset = ref("");
+    const complianceFormat = ref("html");
+    const complianceError = ref("");
+    const privacyQuasiIds = ref([]);
+    const privacyMetricsResult = ref(null);
+    const privacyMetricsError = ref("");
+    const showDiffPanel = ref(false);
+    const diffResult = ref(null);
+    const diffError = ref("");
+
+    async function generateComplianceReport() {
+      complianceError.value = "";
+      const tab = activeTab.value;
+      try {
+        const { blob, filename } = await engine.complianceReport(
+          tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null,
+          { title: "Relatório de Conformidade LGPD", organization: complianceOrg.value,
+            dataset_name: complianceDataset.value || tab.name, format: complianceFormat.value }
+        );
+        FileIO.downloadBlob(blob, filename);
+      } catch (err) {
+        complianceError.value = err.message || String(err);
+      }
+    }
+
+    async function runPrivacyMetrics() {
+      privacyMetricsError.value = ""; privacyMetricsResult.value = null;
+      if (!privacyQuasiIds.value.length) { privacyMetricsError.value = "Marque ao menos uma coluna quasi-identificadora."; return; }
+      const tab = activeTab.value;
+      try {
+        const res = await engine.privacyMetrics(
+          tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null,
+          { quasi_identifiers: privacyQuasiIds.value }
+        );
+        privacyMetricsResult.value = res;
+      } catch (err) {
+        privacyMetricsError.value = err.message || String(err);
+      }
+    }
+
+    async function openDiffPanel() {
+      diffError.value = ""; diffResult.value = null;
+      showDiffPanel.value = true;
+      const tab = activeTab.value;
+      try {
+        diffResult.value = await engine.pipelineDiff(tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null);
+      } catch (err) {
+        diffError.value = err.message || String(err);
+      }
+    }
+
+    // ── Ferramentas .dlk (inspecionar / trocar chave) ───────────────────
+    const showDlkToolsPanel = ref(false);
+    const dlkInspectFile = ref(null);
+    const dlkInspectKey = ref("");
+    const dlkInspectKeyVisible = ref(false);
+    const dlkInspectResult = ref(null);
+    const dlkInspectError = ref("");
+    const dlkRekeyFile = ref(null);
+    const dlkRekeyOldKey = ref("");
+    const dlkRekeyNewKey = ref("");
+    const dlkRekeyError = ref("");
+    const dlkRekeySuccess = ref("");
+
+    function openDlkToolsPanel() {
+      dlkInspectFile.value = null; dlkInspectResult.value = null; dlkInspectError.value = "";
+      dlkRekeyFile.value = null; dlkRekeyError.value = ""; dlkRekeySuccess.value = "";
+      showDlkToolsPanel.value = true;
+    }
+    function onDlkInspectFilePicked(e) { dlkInspectFile.value = e.target.files[0] || null; }
+    function onDlkRekeyFilePicked(e) { dlkRekeyFile.value = e.target.files[0] || null; }
+
+    async function doDlkInspect() {
+      dlkInspectError.value = ""; dlkInspectResult.value = null;
+      try {
+        dlkInspectResult.value = await engine.dlkInspect(dlkInspectFile.value, dlkInspectKey.value || null);
+      } catch (err) {
+        dlkInspectError.value = err.message || String(err);
+      }
+    }
+    async function doDlkRekey() {
+      dlkRekeyError.value = ""; dlkRekeySuccess.value = "";
+      if (!dlkRekeyOldKey.value || !dlkRekeyNewKey.value) { dlkRekeyError.value = "Informe a chave atual e a nova."; return; }
+      try {
+        const { blob, filename } = await engine.dlkRekey(dlkRekeyFile.value, dlkRekeyOldKey.value, dlkRekeyNewKey.value);
+        FileIO.downloadBlob(blob, filename);
+        dlkRekeySuccess.value = "Chave trocada — o arquivo com a chave nova foi baixado.";
+      } catch (err) {
+        dlkRekeyError.value = err.message || String(err);
+      }
+    }
+
+    // ── Varrer pasta inteira ─────────────────────────────────────────────
+    const showScanDirPanel = ref(false);
+    const scanDirPath = ref("");
+    const scanDirRecursive = ref(true);
+    const scanDirMinRisk = ref(null);
+    const scanDirResult = ref(null);
+    const scanDirError = ref("");
+
+    function openScanDirPanel() {
+      scanDirResult.value = null; scanDirError.value = "";
+      showScanDirPanel.value = true;
+    }
+    async function doScanDirectory() {
+      scanDirError.value = ""; scanDirResult.value = null;
+      if (!scanDirPath.value.trim()) { scanDirError.value = "Informe o caminho da pasta."; return; }
+      try {
+        scanDirResult.value = await engine.scanDirectory(scanDirPath.value.trim(), {
+          recursive: scanDirRecursive.value, min_risk: scanDirMinRisk.value,
+        });
+      } catch (err) {
+        scanDirError.value = err.message || String(err);
+      }
+    }
+
+    // ── Trilha de auditoria ──────────────────────────────────────────────
+    const showAuditPanel = ref(false);
+    const auditEnabled = ref(false);
+    const auditPath = ref("");
+    const auditWebhook = ref("");
+    const auditConfigError = ref("");
+    const auditLogEntries = ref([]);
+    const auditLogError = ref("");
+    const auditSavePath = ref("");
+    const auditSaveKey = ref("");
+    const auditSaveSuccess = ref("");
+
+    async function openAuditPanel() {
+      auditConfigError.value = ""; auditSaveSuccess.value = "";
+      try {
+        const status = await engine.auditStatus();
+        auditEnabled.value = status.enabled;
+        if (status.enabled) await refreshAuditLog();
+      } catch { /* painel ainda abre normalmente mesmo se isso falhar */ }
+      showAuditPanel.value = true;
+    }
+    async function applyAuditConfig() {
+      auditConfigError.value = "";
+      try {
+        await engine.auditConfigure(auditEnabled.value, auditPath.value || null, auditWebhook.value || null);
+        if (auditEnabled.value) await refreshAuditLog();
+      } catch (err) {
+        auditConfigError.value = err.message || String(err);
+      }
+    }
+    async function refreshAuditLog() {
+      auditLogError.value = "";
+      try {
+        const log = await engine.auditLog();
+        auditLogEntries.value = log.entries || [];
+      } catch (err) {
+        auditLogError.value = err.message || String(err);
+      }
+    }
+    async function doAuditSave() {
+      auditSaveSuccess.value = "";
+      if (!auditSavePath.value.trim()) { auditConfigError.value = "Informe o caminho do arquivo."; return; }
+      try {
+        const res = await engine.auditSave(auditSavePath.value.trim(), auditSaveKey.value || null);
+        auditSaveSuccess.value = `Salvo em ${res.saved_to}`;
+      } catch (err) {
+        auditConfigError.value = err.message || String(err);
+      }
+    }
+
     const showUnmaskPanel = ref(false);
     const unmaskColumns = ref([]);
     const unmaskError = ref("");
@@ -444,6 +629,39 @@ createApp({
       engineMode.value = await engine.detect();
     });
 
+    // ── Atalhos de teclado ───────────────────────────────────────────────
+    function isTypingInField(e) {
+      const tag = (e.target.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable;
+    }
+    function handleGlobalKeydown(e) {
+      const ctrl = e.ctrlKey || e.metaKey; // metaKey cobre Cmd no Mac
+      if (ctrl && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault(); undoStep(); return;
+      }
+      if (ctrl && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+        e.preventDefault(); redoStep(); return;
+      }
+      if (ctrl && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (activeTab.value) saveRecipe();
+        return;
+      }
+      if (ctrl && e.key.toLowerCase() === "f") {
+        if (!activeTab.value) return;
+        e.preventDefault();
+        const el = document.getElementById("grid-search-input");
+        if (el) { el.focus(); el.select(); }
+        return;
+      }
+      if (e.key === "Escape") {
+        // Fecha o que estiver aberto no momento, na ordem que faz mais sentido
+        if (draftStep.value) { cancelStepEdit(); return; }
+        if (showStepPicker.value) { showStepPicker.value = false; return; }
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeydown);
+
     // ── Carregar arquivo ────────────────────────────────────────────────
     function addTabFromResult(res) {
       const tab = newTab(res.name, res);
@@ -520,16 +738,42 @@ createApp({
       tab.running = true;
       tab.errorMessage = "";
       try {
-        const res = await engine.run(tab.tableId, JSON.parse(JSON.stringify(tab.steps)), { salt: salt.value || null });
+        const res = await engine.run(tab.tableId, JSON.parse(JSON.stringify(tab.steps)),
+          { salt: salt.value || null, offset: tab.gridOffset, search: tab.gridSearch || null });
         tab.columns = res.columns;
         tab.previewRows = res.previewRows;
         tab.totalRows = res.totalRows;
+        tab.filteredRows = res.filteredRows ?? res.totalRows;
         await refreshPiiReport(tab);
       } catch (err) {
         tab.errorMessage = err.message || String(err);
       } finally {
         tab.running = false;
       }
+    }
+
+    const GRID_PAGE_SIZE = 200;
+    let gridSearchTimer = null;
+    function gridSearchChanged() {
+      const tab = activeTab.value;
+      if (!tab) return;
+      clearTimeout(gridSearchTimer);
+      gridSearchTimer = setTimeout(() => {
+        tab.gridOffset = 0; // toda busca nova volta pra primeira página
+        runPipeline();
+      }, 300);
+    }
+    function gridNextPage() {
+      const tab = activeTab.value;
+      if (!tab || tab.gridOffset + GRID_PAGE_SIZE >= tab.filteredRows) return;
+      tab.gridOffset += GRID_PAGE_SIZE;
+      runPipeline();
+    }
+    function gridPrevPage() {
+      const tab = activeTab.value;
+      if (!tab || tab.gridOffset <= 0) return;
+      tab.gridOffset = Math.max(0, tab.gridOffset - GRID_PAGE_SIZE);
+      runPipeline();
     }
 
     async function refreshPiiReport(tab) {
@@ -542,6 +786,28 @@ createApp({
     }
 
     // ── Gestão de passos (sempre na aba ativa) ──────────────────────────
+    function pushUndoSnapshot(tab) {
+      tab.undoStack.push(JSON.parse(JSON.stringify(tab.steps)));
+      if (tab.undoStack.length > 50) tab.undoStack.shift(); // limite razoável de memória
+      tab.redoStack.length = 0; // qualquer ação nova invalida o "refazer" pendente
+    }
+    function undoStep() {
+      const tab = activeTab.value;
+      if (!tab || !tab.undoStack.length) return;
+      tab.redoStack.push(JSON.parse(JSON.stringify(tab.steps)));
+      const prev = tab.undoStack.pop();
+      tab.steps.splice(0, tab.steps.length, ...prev);
+      runPipeline();
+    }
+    function redoStep() {
+      const tab = activeTab.value;
+      if (!tab || !tab.redoStack.length) return;
+      tab.undoStack.push(JSON.parse(JSON.stringify(tab.steps)));
+      const next = tab.redoStack.pop();
+      tab.steps.splice(0, tab.steps.length, ...next);
+      runPipeline();
+    }
+
     function openStepPicker() { stepSearchQuery.value = ""; showStepPicker.value = true; }
     function startNewStep(type) {
       showStepPicker.value = false;
@@ -556,6 +822,7 @@ createApp({
 
     async function confirmStep() {
       const tab = activeTab.value;
+      pushUndoSnapshot(tab);
       if (editingIndex.value === null) tab.steps.push(draftStep.value);
       else tab.steps.splice(editingIndex.value, 1, draftStep.value);
       draftStep.value = null;
@@ -563,9 +830,16 @@ createApp({
       await runPipeline();
     }
 
-    async function removeStep(idx) { activeTab.value.steps.splice(idx, 1); await runPipeline(); }
+    async function removeStep(idx) {
+      const tab = activeTab.value;
+      pushUndoSnapshot(tab);
+      tab.steps.splice(idx, 1);
+      await runPipeline();
+    }
     async function toggleStep(idx) {
-      const step = activeTab.value.steps[idx];
+      const tab = activeTab.value;
+      pushUndoSnapshot(tab);
+      const step = tab.steps[idx];
       step.enabled = step.enabled === false ? true : false;
       await runPipeline();
     }
@@ -573,7 +847,9 @@ createApp({
     function dragStart(idx) { dragIndex = idx; }
     async function dropOn(idx) {
       if (dragIndex === null || dragIndex === idx) return;
-      const steps = activeTab.value.steps;
+      const tab = activeTab.value;
+      pushUndoSnapshot(tab);
+      const steps = tab.steps;
       const [moved] = steps.splice(dragIndex, 1);
       steps.splice(idx, 0, moved);
       dragIndex = null;
@@ -603,6 +879,14 @@ createApp({
         case "groupby": return `${step.by.join(", ")} · ${step.aggregations.length} agregação(ões)`;
         case "pivot": return `${step.index || "?"} × ${step.on || "?"}`;
         case "mask": return `${step.columns.join(", ") || "(nenhuma)"} — ${step.strategy}${step.rows ? " (algumas linhas)" : ""}`;
+        case "describe": return "estatísticas de todas as colunas numéricas";
+        case "value_counts": return `${step.column || "?"}${step.normalize ? " (proporção)" : ""}`;
+        case "corr": return `método: ${step.method}`;
+        case "explode": return step.column || "?";
+        case "shift_step": return `${step.kind} ${step.periods}`;
+        case "melt": return `${(step.id_cols||[]).join(", ") || "?"} → ${(step.value_cols||[]).join(", ") || "?"}`;
+        case "find_replace": return `"${step.find || '?'}" → "${step.replace || ''}"${step.regex ? " (regex)" : ""}`;
+        case "synthetic": return `${step.n || "mesmo total"} linha(s)${step.mask_result ? ", mascarado" : ""}`;
         default: return "";
       }
     }
@@ -700,8 +984,21 @@ createApp({
       jobStepsJsonText, jobFormError, jobUpsertOnText, jobRunsFor, jobRunsList,
       openJobsPanel, startNewJob, editJob, useActiveTabStepsInJob, cancelJobForm, saveJob,
       deleteJobConfirm, toggleJobEnabled, runJobNowClick, viewJobRuns, closeJobRuns, formatTimestamp,
+      complianceOrg, complianceDataset, complianceFormat, complianceError, generateComplianceReport,
+      privacyQuasiIds, privacyMetricsResult, privacyMetricsError, runPrivacyMetrics,
+      showDiffPanel, diffResult, diffError, openDiffPanel,
+      showDlkToolsPanel, dlkInspectFile, dlkInspectKey, dlkInspectKeyVisible, dlkInspectResult, dlkInspectError,
+      dlkRekeyFile, dlkRekeyOldKey, dlkRekeyNewKey, dlkRekeyError, dlkRekeySuccess,
+      openDlkToolsPanel, onDlkInspectFilePicked, onDlkRekeyFilePicked, doDlkInspect, doDlkRekey,
+      showScanDirPanel, scanDirPath, scanDirRecursive, scanDirMinRisk, scanDirResult, scanDirError,
+      openScanDirPanel, doScanDirectory,
+      showAuditPanel, auditEnabled, auditPath, auditWebhook, auditConfigError,
+      auditLogEntries, auditLogError, auditSavePath, auditSaveKey, auditSaveSuccess,
+      openAuditPanel, applyAuditConfig, refreshAuditLog, doAuditSave,
       pendingEncryptedFile, showKeyPrompt, keyPromptValue, keyPromptVisible, keyPromptError,
       onFilePicked, onDrop, isDraggingOver, reset, closeTab, selectTab,
+      GRID_PAGE_SIZE, gridSearchChanged, gridNextPage, gridPrevPage,
+      undoStep, redoStep,
       openStepPicker, startNewStep, editStep, cancelStepEdit,
       confirmStep, removeStep, toggleStep, dragStart, dropOn, toggleRowsCondition,
       stepTypeMeta, stepLabel, stepDescription, formatCell, generateSalt, saveRecipe,

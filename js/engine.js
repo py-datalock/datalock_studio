@@ -85,11 +85,24 @@ class DataEngine {
     const entry = this._entry(tableId);
     if (this.mode === "server") {
       const res = await ServerEngine.runRecipe(entry.sessionId, steps, context);
-      return { previewRows: res.preview_rows, totalRows: res.total_rows, columns: res.columns, trace: res.trace };
+      return {
+        previewRows: res.preview_rows, totalRows: res.total_rows, columns: res.columns,
+        trace: res.trace, filteredRows: res.filtered_rows ?? res.total_rows, offset: res.offset ?? 0,
+      };
     }
     const { table, trace } = await ClientEngine.runRecipe(entry.sourceTable, steps, context);
     this._lastResults.set(tableId, table);
-    return { previewRows: table.rows.slice(0, 200), totalRows: table.rows.length, columns: table.columns, trace };
+    const PAGE = 200;
+    let rows = table.rows;
+    let filteredRows = rows.length;
+    if (context.search) {
+      const needle = context.search.toLowerCase();
+      rows = rows.filter((row) => table.columns.some((c) => String(row[c] ?? "").toLowerCase().includes(needle)));
+      filteredRows = rows.length;
+    }
+    const offset = context.offset || 0;
+    const page = rows.slice(offset, offset + PAGE);
+    return { previewRows: page, totalRows: table.rows.length, columns: table.columns, trace, filteredRows, offset };
   }
 
   async scanPii(tableId) {
@@ -184,6 +197,32 @@ class DataEngine {
   async setJobEnabled(id, enabled) { this._requireServer("Automações"); return ServerEngine.setJobEnabled(id, enabled); }
   async runJobNow(id) { this._requireServer("Automações"); return ServerEngine.runJobNow(id); }
   async jobRuns(id) { this._requireServer("Automações"); return ServerEngine.jobRuns(id); }
+
+  // ── Exploração de dados, relatório LGPD, ferramentas .dlk, varredura ────
+  async complianceReport(tableId, steps, salt, options) {
+    this._requireServer("Relatório de conformidade");
+    const entry = this._entry(tableId);
+    return ServerEngine.complianceReport(entry.sessionId, steps, salt, options);
+  }
+  async privacyMetrics(tableId, steps, salt, options) {
+    this._requireServer("Avaliação de privacidade");
+    const entry = this._entry(tableId);
+    return ServerEngine.privacyMetrics(entry.sessionId, steps, salt, options);
+  }
+  async pipelineDiff(tableId, steps, salt) {
+    this._requireServer("Comparar antes/depois");
+    const entry = this._entry(tableId);
+    return ServerEngine.pipelineDiff(entry.sessionId, steps, salt);
+  }
+  async dlkInspect(file, key) { this._requireServer("Inspecionar .dlk"); return ServerEngine.dlkInspect(file, key); }
+  async dlkRekey(file, oldKey, newKey) { this._requireServer("Trocar chave .dlk"); return ServerEngine.dlkRekey(file, oldKey, newKey); }
+  async scanDirectory(path, options) { this._requireServer("Varrer pasta"); return ServerEngine.scanDirectory(path, options); }
+
+  // ── Trilha de auditoria ──────────────────────────────────────────────
+  async auditConfigure(enabled, path, webhook) { this._requireServer("Trilha de auditoria"); return ServerEngine.auditConfigure(enabled, path, webhook); }
+  async auditStatus() { this._requireServer("Trilha de auditoria"); return ServerEngine.auditStatus(); }
+  async auditLog() { this._requireServer("Trilha de auditoria"); return ServerEngine.auditLog(); }
+  async auditSave(path, auditKey) { this._requireServer("Trilha de auditoria"); return ServerEngine.auditSave(path, auditKey); }
 
   _requireServer(action) {
     if (this.mode !== "server") {
