@@ -14,7 +14,36 @@ import * as FileIO from "./file-io.js";
 import { generateSalt as genSalt, validateSaltStrength } from "./crypto-utils.js";
 import { icon as iconFn } from "./icons.js";
 
-const { createApp, ref, reactive, computed, onMounted } = Vue;
+/**
+ * Transforma qualquer coisa capturada num catch (err) numa string legível
+ * pra mostrar na tela. Sem isto, `err.message || String(err)` falha
+ * silenciosamente quando `err.message` já existe mas NÃO é uma string —
+ * por exemplo, o formato de erro de validação 422 do FastAPI (uma lista
+ * de objetos `{loc, msg, type}`), ou qualquer outro objeto passado sem
+ * querer para `new Error(...)`. Nesses casos `err.message` é "verdadeiro"
+ * (não cai no `||`), mas ao interpolar no template Vue vira literalmente
+ * o texto "[object Object]" — confuso e sem nenhuma informação útil.
+ */
+function formatError(err) {
+  if (err == null) return "Erro desconhecido.";
+  const msg = err.message !== undefined ? err.message : err;
+  if (typeof msg === "string") return msg;
+  if (Array.isArray(msg)) {
+    // Formato de erro de validação do FastAPI/Pydantic: [{loc, msg, type}, ...]
+    const parts = msg.map((m) => {
+      if (!m || typeof m !== "object") return JSON.stringify(m);
+      const field = Array.isArray(m.loc) ? m.loc.filter((p) => p !== "body").join(".") : null;
+      return field ? `${field}: ${m.msg}` : (m.msg || JSON.stringify(m));
+    });
+    return parts.join("; ") || "Erro desconhecido.";
+  }
+  if (typeof msg === "object") {
+    try { return JSON.stringify(msg); } catch { return String(msg); }
+  }
+  return String(msg);
+}
+
+const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
 
 let uid = 1;
 const newId = () => `s${uid++}`;
@@ -43,7 +72,7 @@ const STEP_TYPES = [
   { type: "shift_step", icon: "arrow-updown", name: "Deslocar valores", desc: "Compara com a linha anterior/seguinte (lag/lead)" },
   { type: "melt", icon: "repeat", name: "Despivotar (melt)", desc: "Transforma colunas em linhas — o inverso da tabela dinâmica" },
   { type: "find_replace", icon: "search", name: "Buscar e substituir", desc: "Troca um texto por outro em uma ou mais colunas, com opção de expressão regular." },
-  { type: "synthetic", icon: "sparkles", name: "Gerar dados sintéticos", desc: "Cria uma tabela nova com a mesma distribuição estatística, sem usar os valores originais." },
+  { type: "synthetic", icon: "sparkles", name: "Gerar dados sintéticos", desc: "Cria uma tabela nova com valores falsos — rápido (bootstrap de linhas) ou estatístico (cópula gaussiana)." },
 ];
 
 function defaultStepFor(type) {
@@ -70,7 +99,7 @@ function defaultStepFor(type) {
     case "shift_step": return { ...base, kind: "shift", periods: 1, columns: [] };
     case "melt": return { ...base, id_cols: [], value_cols: [] };
     case "find_replace": return { ...base, columns: [], find: "", replace: "", regex: false };
-    case "synthetic": return { ...base, n: null, epochs: 30, mask_result: false, salt: "" };
+    case "synthetic": return { ...base, engine: "fast", n: null };
     default: return base;
   }
 }
@@ -79,12 +108,52 @@ function newTab(name, { tableId, columns, previewRows, totalRows }) {
   return reactive({
     id: newTabId(), tableId, name,
     columns, previewRows, totalRows,
-    steps: [], running: false, errorMessage: "", piiReport: {},
+    steps: [], running: false, errorMessage: "", errorExpanded: false, piiReport: {},
     gridOffset: 0, gridSearch: "", filteredRows: totalRows,
-    undoStack: [], redoStack: [],
+    undoStack: [], redoStack: [], showChart: false,
   });
 }
 
+/**
+ * Se o último passo HABILITADO da receita é algo que dá pra ver como
+ * gráfico, devolve qual tipo — senão, null (esconde o botão de gráfico).
+ * Escopo deliberadamente pequeno por enquanto: "Contar valores" (barras)
+ * é o caso mais direto (uma categoria, uma contagem); "Matriz de
+ * correlação" e "Resumo estatístico" ficam para uma próxima rodada — um
+ * mapa de calor de verdade precisa de mais do que o Chart.js básico
+ * oferece de graça, e não quis entregar isso pela metade.
+ */
+function chartableStepType(tab) {
+  const enabled = tab.steps.filter((s) => s.enabled !== false);
+  if (!enabled.length) return null;
+  const last = enabled[enabled.length - 1];
+  return last.type === "value_counts" ? "bar" : null;
+}
+
+let _chartInstance = null;
+async function renderTabChart(tab, canvasEl) {
+  if (!canvasEl) return;
+  // chart.js/auto já vem com todos os componentes registrados — mais
+  // simples e robusto via CDN do que registrar manualmente cada peça.
+  const { default: Chart } = await import("https://cdn.jsdelivr.net/npm/chart.js@4/auto/+esm");
+  if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
+
+  const kind = chartableStepType(tab);
+  if (kind !== "bar") return;
+  const [labelCol, valueCol] = tab.columns; // value_counts sempre devolve [categoria, frequência|proporção]
+  const labels = tab.previewRows.map((r) => String(r[labelCol]));
+  const values = tab.previewRows.map((r) => Number(r[valueCol]));
+
+  _chartInstance = new Chart(canvasEl, {
+    type: "bar",
+    data: { labels, datasets: [{ label: valueCol, data: values, backgroundColor: "#7c6cf0" }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true } },
+    },
+  });
+}
 createApp({
   setup() {
     const engineMode = ref("client");
@@ -217,10 +286,19 @@ createApp({
     const draftStep = ref(null);
     const editingIndex = ref(null);
     const showPiiPanel = ref(false);
+    const showEdaPanel = ref(false);
+    const edaLoading = ref(false);
+    const edaError = ref("");
+    const edaResult = ref(null);
     const complianceOrg = ref("");
     const complianceDataset = ref("");
     const complianceFormat = ref("html");
     const complianceError = ref("");
+    // Colunas que a pessoa marcou manualmente como PII pra entrar no
+    // relatório mesmo que a detecção automática (regex simples) não
+    // tenha reconhecido — comum em texto livre, como endereço, que não
+    // segue um padrão fixo como CPF/e-mail/telefone.
+    const complianceManualPiiColumns = ref([]);
     const privacyQuasiIds = ref([]);
     const privacyMetricsResult = ref(null);
     const privacyMetricsError = ref("");
@@ -235,11 +313,12 @@ createApp({
         const { blob, filename } = await engine.complianceReport(
           tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null,
           { title: "Relatório de Conformidade LGPD", organization: complianceOrg.value,
-            dataset_name: complianceDataset.value || tab.name, format: complianceFormat.value }
+            dataset_name: complianceDataset.value || tab.name, format: complianceFormat.value,
+            manual_pii_columns: complianceManualPiiColumns.value }
         );
         FileIO.downloadBlob(blob, filename);
       } catch (err) {
-        complianceError.value = err.message || String(err);
+        complianceError.value = formatError(err);
       }
     }
 
@@ -248,13 +327,18 @@ createApp({
       if (!privacyQuasiIds.value.length) { privacyMetricsError.value = "Marque ao menos uma coluna quasi-identificadora."; return; }
       const tab = activeTab.value;
       try {
-        const res = await engine.privacyMetrics(
-          tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null,
-          { quasi_identifiers: privacyQuasiIds.value }
-        );
+        const res = engineMode.value === "server"
+          ? await engine.privacyMetrics(
+              tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null,
+              { quasi_identifiers: privacyQuasiIds.value }
+            )
+          : await engine.kAnonymity(
+              tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null,
+              privacyQuasiIds.value
+            );
         privacyMetricsResult.value = res;
       } catch (err) {
-        privacyMetricsError.value = err.message || String(err);
+        privacyMetricsError.value = formatError(err);
       }
     }
 
@@ -265,7 +349,7 @@ createApp({
       try {
         diffResult.value = await engine.pipelineDiff(tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null);
       } catch (err) {
-        diffError.value = err.message || String(err);
+        diffError.value = formatError(err);
       }
     }
 
@@ -295,7 +379,7 @@ createApp({
       try {
         dlkInspectResult.value = await engine.dlkInspect(dlkInspectFile.value, dlkInspectKey.value || null);
       } catch (err) {
-        dlkInspectError.value = err.message || String(err);
+        dlkInspectError.value = formatError(err);
       }
     }
     async function doDlkRekey() {
@@ -306,13 +390,15 @@ createApp({
         FileIO.downloadBlob(blob, filename);
         dlkRekeySuccess.value = "Chave trocada — o arquivo com a chave nova foi baixado.";
       } catch (err) {
-        dlkRekeyError.value = err.message || String(err);
+        dlkRekeyError.value = formatError(err);
       }
     }
 
     // ── Varrer pasta inteira ─────────────────────────────────────────────
     const showScanDirPanel = ref(false);
     const scanDirPath = ref("");
+    const scanDirFiles = ref(null);   // prévia web: arquivos escolhidos no seletor de pasta
+    const scanDirFolderName = ref("");
     const scanDirRecursive = ref(true);
     const scanDirMinRisk = ref(null);
     const scanDirResult = ref(null);
@@ -322,15 +408,24 @@ createApp({
       scanDirResult.value = null; scanDirError.value = "";
       showScanDirPanel.value = true;
     }
+    function onScanDirPicked(ev) {
+      const files = Array.from(ev.target.files || []);
+      scanDirFiles.value = files.length ? files : null;
+      const first = files[0];
+      scanDirFolderName.value = first && first.webkitRelativePath
+        ? `${first.webkitRelativePath.split("/")[0]} (${files.length} arquivo(s))` : "";
+    }
     async function doScanDirectory() {
       scanDirError.value = ""; scanDirResult.value = null;
-      if (!scanDirPath.value.trim()) { scanDirError.value = "Informe o caminho da pasta."; return; }
+      const isServer = engineMode.value === "server";
+      if (isServer && !scanDirPath.value.trim()) { scanDirError.value = "Informe o caminho da pasta."; return; }
+      if (!isServer && !scanDirFiles.value) { scanDirError.value = "Escolha uma pasta primeiro."; return; }
       try {
-        scanDirResult.value = await engine.scanDirectory(scanDirPath.value.trim(), {
+        scanDirResult.value = await engine.scanDirectory(isServer ? scanDirPath.value.trim() : scanDirFiles.value, {
           recursive: scanDirRecursive.value, min_risk: scanDirMinRisk.value,
         });
       } catch (err) {
-        scanDirError.value = err.message || String(err);
+        scanDirError.value = formatError(err);
       }
     }
 
@@ -361,7 +456,7 @@ createApp({
         await engine.auditConfigure(auditEnabled.value, auditPath.value || null, auditWebhook.value || null);
         if (auditEnabled.value) await refreshAuditLog();
       } catch (err) {
-        auditConfigError.value = err.message || String(err);
+        auditConfigError.value = formatError(err);
       }
     }
     async function refreshAuditLog() {
@@ -370,17 +465,17 @@ createApp({
         const log = await engine.auditLog();
         auditLogEntries.value = log.entries || [];
       } catch (err) {
-        auditLogError.value = err.message || String(err);
+        auditLogError.value = formatError(err);
       }
     }
     async function doAuditSave() {
       auditSaveSuccess.value = "";
-      if (!auditSavePath.value.trim()) { auditConfigError.value = "Informe o caminho do arquivo."; return; }
+      if (engineMode.value === "server" && !auditSavePath.value.trim()) { auditConfigError.value = "Informe o caminho do arquivo."; return; }
       try {
         const res = await engine.auditSave(auditSavePath.value.trim(), auditSaveKey.value || null);
         auditSaveSuccess.value = `Salvo em ${res.saved_to}`;
       } catch (err) {
-        auditConfigError.value = err.message || String(err);
+        auditConfigError.value = formatError(err);
       }
     }
 
@@ -390,7 +485,9 @@ createApp({
     const showExportPanel = ref(false);
     const showAbout = ref(false);
     const exportFormat = ref("csv");
-    const exportFilename = ref("resultado");
+    const exportFilename = ref("");
+    const exportAllTabs = ref(false);   // juntar todas as abas num só .dlk (multi-frame)
+    const canExportAllTabs = computed(() => tabs.length > 1 && exportFormat.value.startsWith("dlk_"));
 
     // ── Banco de dados ───────────────────────────────────────────────────
     const showDbPanel = ref(false);
@@ -407,6 +504,7 @@ createApp({
     const dbUpsertColumns = ref([]);
     const dbWriteError = ref("");
     const dbWriteSuccess = ref("");
+    const dbBrowserName = ref("");   // prévia: nome do arquivo SQLite aberto
 
     function openDbPanel() {
       dbConnectError.value = ""; dbReadError.value = ""; dbWriteError.value = ""; dbWriteSuccess.value = "";
@@ -422,16 +520,47 @@ createApp({
         const tablesRes = await engine.dbTables(dbConnectionId.value);
         dbTablesList.value = tablesRes.tables || [];
       } catch (err) {
-        dbConnectError.value = err.message || String(err);
+        dbConnectError.value = formatError(err);
       } finally {
         dbConnecting.value = false;
       }
     }
 
-    function disconnectDb() {
+    // Prévia web: abre um arquivo SQLite (ou cria um banco novo) em memória, no navegador.
+    async function connectSqliteFile(ev) {
+      const file = ev.target.files && ev.target.files[0];
+      ev.target.value = "";
+      if (!file) return;
+      await connectSqlite(file);
+    }
+    async function connectSqlite(file) {
+      dbConnectError.value = "";
+      dbConnecting.value = true;
+      try {
+        const res = await engine.dbConnect(file);
+        dbConnectionId.value = res.connection_id;
+        dbBrowserName.value = file ? file.name : "novo_banco.sqlite";
+        const tablesRes = await engine.dbTables(dbConnectionId.value);
+        dbTablesList.value = tablesRes.tables || [];
+      } catch (err) {
+        dbConnectError.value = formatError(err);
+      } finally {
+        dbConnecting.value = false;
+      }
+    }
+    async function downloadSqlite() {
+      dbReadError.value = "";
+      try { await engine.dbExport(dbConnectionId.value); }
+      catch (err) { dbReadError.value = formatError(err); }
+    }
+
+    async function disconnectDb() {
+      const id = dbConnectionId.value;
       dbConnectionId.value = null;
       dbTablesList.value = [];
       dbUri.value = "";
+      dbBrowserName.value = "";
+      if (id) { try { await engine.dbClose(id); } catch { /* fechar é best-effort */ } }
     }
 
     async function openDbTableAsTab(tableName) {
@@ -441,7 +570,7 @@ createApp({
         addTabFromResult(res);
         showDbPanel.value = false;
       } catch (err) {
-        dbReadError.value = err.message || String(err);
+        dbReadError.value = formatError(err);
       }
     }
 
@@ -453,7 +582,7 @@ createApp({
         addTabFromResult(res);
         showDbPanel.value = false;
       } catch (err) {
-        dbReadError.value = err.message || String(err);
+        dbReadError.value = formatError(err);
       }
     }
 
@@ -473,8 +602,12 @@ createApp({
           dbWriteMode.value === "upsert" ? dbUpsertColumns.value : null
         );
         dbWriteSuccess.value = `Enviado para "${info.table}" (${info.rows ?? "?"} linhas).`;
+        if (engineMode.value !== "server") {
+          const tablesRes = await engine.dbTables(dbConnectionId.value);
+          dbTablesList.value = tablesRes.tables || [];
+        }
       } catch (err) {
-        dbWriteError.value = err.message || String(err);
+        dbWriteError.value = formatError(err);
       }
     }
 
@@ -511,7 +644,7 @@ createApp({
       try {
         jobsList.value = await engine.listJobs();
       } catch (err) {
-        jobsListError.value = err.message || String(err);
+        jobsListError.value = formatError(err);
       } finally {
         jobsLoading.value = false;
       }
@@ -577,7 +710,7 @@ createApp({
         jobDraft.value = null;
         await refreshJobs();
       } catch (err) {
-        jobFormError.value = err.message || String(err);
+        jobFormError.value = formatError(err);
       }
     }
 
@@ -625,8 +758,46 @@ createApp({
 
     let dragIndex = null;
 
-    onMounted(async () => {
-      engineMode.value = await engine.detect();
+    // ── Conectar ao software completo (SEMPRE manual — ver README) ───────
+    // Antes, isto rodava sozinho em todo carregamento da página
+    // (`onMounted`), fazendo um `fetch("http://127.0.0.1:8722/health")` em
+    // segundo plano. Isso é exatamente o gatilho do aviso de permissão
+    // "este site quer acessar dispositivos na sua rede local" que
+    // navegadores baseados em Chromium passaram a mostrar — e, pior,
+    // aparecia para TODO MUNDO que abrisse a prévia, mesmo quem nunca
+    // instalou nem pretende instalar o software completo, o que parece
+    // (e é) suspeito para um site que deveria ser só uma prévia estática.
+    // Agora essa checagem só roda quando a própria pessoa clica em
+    // "Conectar ao software completo" — a permissão do navegador, se
+    // aparecer, aparece em resposta a uma ação que a pessoa pediu, não
+    // como efeito colateral de abrir uma aba.
+    const connectingToServer = ref(false);
+    const serverConnectError = ref("");
+
+    async function connectToLocalSoftware() {
+      if (engineMode.value === "server" || connectingToServer.value) return;
+      connectingToServer.value = true;
+      serverConnectError.value = "";
+      try {
+        const mode = await engine.detect();
+        engineMode.value = mode;
+        if (mode !== "server") {
+          serverConnectError.value =
+            "Não encontrei o software completo rodando em http://127.0.0.1:8722. " +
+            "Confirme que você já rodou o comando \"datalock-studio\" nesta máquina.";
+        }
+      } catch (err) {
+        serverConnectError.value = `Falha ao tentar conectar: ${err.message}`;
+      } finally {
+        connectingToServer.value = false;
+      }
+    }
+
+    onMounted(() => {
+      // Não faz NENHUMA chamada de rede sozinho — engineMode começa (e
+      // fica, até um clique explícito) como "client". Só remove a tela
+      // de carregamento inicial (ver index.html/style.css).
+      document.getElementById("dl-boot-splash")?.remove();
     });
 
     // ── Atalhos de teclado ───────────────────────────────────────────────
@@ -663,6 +834,19 @@ createApp({
     window.addEventListener("keydown", handleGlobalKeydown);
 
     // ── Carregar arquivo ────────────────────────────────────────────────
+    // Mensagens de erro podem ser longas (ex.: instrução de instalação de
+    // uma dependência opcional) — em vez de cortar com "...", deixa
+    // clicar pra expandir e copiar o texto inteiro.
+    async function copyErrorMessage(tab) {
+      try {
+        await navigator.clipboard.writeText(tab.errorMessage);
+      } catch {
+        // Sem permissão de clipboard (ex.: contexto não seguro) — a
+        // pessoa ainda consegue selecionar o texto manualmente no balão
+        // expandido, então isso não é uma falha crítica.
+      }
+    }
+
     function addTabFromResult(res) {
       const tab = newTab(res.name, res);
       tabs.push(tab);
@@ -680,7 +864,7 @@ createApp({
         keyPromptValue.value = "";
         keyPromptError.value = "";
       } catch (err) {
-        const msg = err.message || String(err);
+        const msg = formatError(err);
         if (/chave \(key\)/i.test(msg) || /criptografad/i.test(msg)) {
           pendingEncryptedFile.value = file;
           showKeyPrompt.value = true;
@@ -706,7 +890,7 @@ createApp({
       try {
         await loadFile(pendingEncryptedFile.value, { key: keyPromptValue.value });
       } catch (err) {
-        keyPromptError.value = err.message || String(err);
+        keyPromptError.value = formatError(err);
       }
     }
     function cancelKeyPrompt() {
@@ -746,7 +930,7 @@ createApp({
         tab.filteredRows = res.filteredRows ?? res.totalRows;
         await refreshPiiReport(tab);
       } catch (err) {
-        tab.errorMessage = err.message || String(err);
+        tab.errorMessage = formatError(err);
       } finally {
         tab.running = false;
       }
@@ -775,6 +959,82 @@ createApp({
       tab.gridOffset = Math.max(0, tab.gridOffset - GRID_PAGE_SIZE);
       runPipeline();
     }
+
+let _edaChartInstances = [];
+async function renderEdaCharts(edaResult) {
+  for (const c of _edaChartInstances) c.destroy();
+  _edaChartInstances = [];
+  if (!edaResult) return;
+  const { default: Chart } = await import("https://cdn.jsdelivr.net/npm/chart.js@4/auto/+esm");
+
+  edaResult.columns.forEach((col, idx) => {
+    if (col.kind === "other") return;
+    const canvasEl = document.getElementById(`eda-chart-${idx}`);
+    if (!canvasEl) return;
+    const source = col.kind === "numeric" ? col.histogram : col.value_counts;
+    const color = col.kind === "numeric" ? "#4dabf7" : "#7c6cf0";
+    const chart = new Chart(canvasEl, {
+      type: "bar",
+      data: { labels: source.labels, datasets: [{ data: source.counts, backgroundColor: color }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true },
+          x: { ticks: { maxRotation: col.kind === "numeric" ? 45 : 60, autoSkip: true, font: { size: 9 } } },
+        },
+      },
+    });
+    _edaChartInstances.push(chart);
+  });
+}
+
+async function openEdaPanel() {
+  const tab = activeTab.value;
+  if (!tab) return;
+  showEdaPanel.value = true;
+  edaError.value = "";
+  edaResult.value = null;
+  edaLoading.value = true;
+  try {
+    const result = await engine.autoEda(tab.tableId, JSON.parse(JSON.stringify(tab.steps)), salt.value || null);
+    edaResult.value = result;
+    await nextTick(); // espera os <canvas> existirem no DOM antes de desenhar
+    await renderEdaCharts(result);
+  } catch (err) {
+    edaError.value = formatError(err);
+  } finally {
+    edaLoading.value = false;
+  }
+}
+function closeEdaPanel() {
+  showEdaPanel.value = false;
+  for (const c of _edaChartInstances) c.destroy();
+  _edaChartInstances = [];
+}
+
+async function toggleChart() {
+      const tab = activeTab.value;
+      if (!tab) return;
+      tab.showChart = !tab.showChart;
+      if (tab.showChart) {
+        await nextTick(); // espera o <canvas> existir no DOM antes de desenhar
+        await renderTabChart(tab, document.getElementById("chart-canvas"));
+      }
+    }
+    // Reflow do gráfico sempre que os dados da aba ativa mudarem (rodou de
+    // novo a receita, trocou de aba) enquanto o modo gráfico está ligado —
+    // sem isto, o gráfico ficaria "parado" mostrando o resultado antigo.
+    watch(
+      () => activeTab.value && [activeTab.value.id, activeTab.value.previewRows, activeTab.value.showChart],
+      async () => {
+        const tab = activeTab.value;
+        if (!tab || !tab.showChart) return;
+        await nextTick();
+        await renderTabChart(tab, document.getElementById("chart-canvas"));
+      },
+      { deep: false }
+    );
 
     async function refreshPiiReport(tab) {
       try {
@@ -886,7 +1146,7 @@ createApp({
         case "shift_step": return `${step.kind} ${step.periods}`;
         case "melt": return `${(step.id_cols||[]).join(", ") || "?"} → ${(step.value_cols||[]).join(", ") || "?"}`;
         case "find_replace": return `"${step.find || '?'}" → "${step.replace || ''}"${step.regex ? " (regex)" : ""}`;
-        case "synthetic": return `${step.n || "mesmo total"} linha(s)${step.mask_result ? ", mascarado" : ""}`;
+        case "synthetic": return `${step.n || "mesmo total"} linha(s) · rápido`;
         default: return "";
       }
     }
@@ -940,7 +1200,7 @@ createApp({
       if (!unmaskColumns.value.length) { unmaskError.value = "Escolha ao menos uma coluna."; return; }
       try {
         const tab = activeTab.value;
-        const res = await engine.unmask(tab.tableId, JSON.parse(JSON.stringify(tab.steps)), unmaskColumns.value, salt.value);
+        const res = await engine.unmask(tab.tableId, JSON.parse(JSON.stringify(tab.steps)), unmaskColumns.value, salt.value, `${tab.name} (revertido)`);
         addTabFromResult(res);
         showUnmaskPanel.value = false;
       } catch (err) {
@@ -949,23 +1209,43 @@ createApp({
     }
 
     // ── Exportar ─────────────────────────────────────────────────────────
+    function openExportPanel() {
+      // Pré-preenche com o nome da própria tabela (não um genérico
+      // "resultado" sempre igual) + sufixo "_datalock", pra ficar claro
+      // que passou pelo processamento e pra não se perder entre vários
+      // arquivos exportados com o mesmo nome de origem.
+      const tab = activeTab.value;
+      const base = (tab && tab.name ? tab.name : "resultado").replace(/[\\/:*?"<>|]/g, "").trim() || "resultado";
+      exportFilename.value = `${base}_datalock`;
+      exportAllTabs.value = false;
+      showExportPanel.value = true;
+    }
     async function doExport() {
       const tab = activeTab.value;
       try {
-        await engine.exportResult(
-          tab.tableId,
-          JSON.parse(JSON.stringify(tab.steps)),
-          { salt: salt.value || null, key: dlkKey.value || null },
-          { format: exportFormat.value, filenameBase: exportFilename.value }
-        );
+        if (exportAllTabs.value && canExportAllTabs.value) {
+          await engine.exportDlkFrames(
+            tabs.map((t) => ({ tableId: t.tableId, steps: JSON.parse(JSON.stringify(t.steps)), name: t.name })),
+            { salt: salt.value || null, key: dlkKey.value || null },
+            { format: exportFormat.value, filenameBase: exportFilename.value }
+          );
+        } else {
+          await engine.exportResult(
+            tab.tableId,
+            JSON.parse(JSON.stringify(tab.steps)),
+            { salt: salt.value || null, key: dlkKey.value || null },
+            { format: exportFormat.value, filenameBase: exportFilename.value }
+          );
+        }
         showExportPanel.value = false;
       } catch (err) {
-        tab.errorMessage = err.message;
+        tab.errorMessage = formatError(err);
       }
     }
 
     return {
-      engineMode, tabs, activeTabId, activeTab,
+      engineMode, connectingToServer, serverConnectError, connectToLocalSoftware,
+      tabs, activeTabId, activeTab,
       theme, toggleTheme, isDarkNow, icon,
       accentColorOptions: ACCENT_OPTIONS, accentColor, density, stepsPosition, showSettingsPanel,
       setAccentColor, setDensity, setStepsPosition,
@@ -974,23 +1254,25 @@ createApp({
       showHelpGuide,
       salt, saltVisible, saltStrength, dlkKey, dlkKeyVisible, dlkKeyStrength,
       showStepPicker, stepSearchQuery, filteredStepTypes, draftStep, showPiiPanel,
+      showEdaPanel, edaLoading, edaError, edaResult, openEdaPanel, closeEdaPanel,
       showUnmaskPanel, unmaskColumns, unmaskError,
-      showExportPanel, showAbout, exportFormat, exportFilename,
+      showExportPanel, showAbout, exportFormat, exportFilename, exportAllTabs, canExportAllTabs, openExportPanel,
       showDbPanel, dbUri, dbUriVisible, dbConnectionId, dbConnecting, dbConnectError,
       dbTablesList, dbSqlQuery, dbReadError, dbWriteTableName, dbWriteMode,
       dbUpsertColumns, dbWriteError, dbWriteSuccess,
-      openDbPanel, connectDb, disconnectDb, openDbTableAsTab, runDbSqlAsTab, sendActiveTabToDb,
+      openDbPanel, connectDb, connectSqliteFile, connectSqlite, downloadSqlite, dbBrowserName, disconnectDb, openDbTableAsTab, runDbSqlAsTab, sendActiveTabToDb,
       showJobsPanel, jobsList, jobsLoading, jobsListError, jobFormOpen, editingJobId, jobDraft,
       jobStepsJsonText, jobFormError, jobUpsertOnText, jobRunsFor, jobRunsList,
       openJobsPanel, startNewJob, editJob, useActiveTabStepsInJob, cancelJobForm, saveJob,
       deleteJobConfirm, toggleJobEnabled, runJobNowClick, viewJobRuns, closeJobRuns, formatTimestamp,
       complianceOrg, complianceDataset, complianceFormat, complianceError, generateComplianceReport,
+      complianceManualPiiColumns,
       privacyQuasiIds, privacyMetricsResult, privacyMetricsError, runPrivacyMetrics,
       showDiffPanel, diffResult, diffError, openDiffPanel,
       showDlkToolsPanel, dlkInspectFile, dlkInspectKey, dlkInspectKeyVisible, dlkInspectResult, dlkInspectError,
       dlkRekeyFile, dlkRekeyOldKey, dlkRekeyNewKey, dlkRekeyError, dlkRekeySuccess,
       openDlkToolsPanel, onDlkInspectFilePicked, onDlkRekeyFilePicked, doDlkInspect, doDlkRekey,
-      showScanDirPanel, scanDirPath, scanDirRecursive, scanDirMinRisk, scanDirResult, scanDirError,
+      showScanDirPanel, scanDirPath, scanDirFiles, scanDirFolderName, onScanDirPicked, scanDirRecursive, scanDirMinRisk, scanDirResult, scanDirError,
       openScanDirPanel, doScanDirectory,
       showAuditPanel, auditEnabled, auditPath, auditWebhook, auditConfigError,
       auditLogEntries, auditLogError, auditSavePath, auditSaveKey, auditSaveSuccess,
@@ -998,11 +1280,12 @@ createApp({
       pendingEncryptedFile, showKeyPrompt, keyPromptValue, keyPromptVisible, keyPromptError,
       onFilePicked, onDrop, isDraggingOver, reset, closeTab, selectTab,
       GRID_PAGE_SIZE, gridSearchChanged, gridNextPage, gridPrevPage,
+      chartableStepType, toggleChart,
       undoStep, redoStep,
       openStepPicker, startNewStep, editStep, cancelStepEdit,
       confirmStep, removeStep, toggleStep, dragStart, dropOn, toggleRowsCondition,
       stepTypeMeta, stepLabel, stepDescription, formatCell, generateSalt, saveRecipe,
-      onRecipePicked, doExport, openUnmaskPanel, doUnmask,
+      onRecipePicked, doExport, openUnmaskPanel, doUnmask, copyErrorMessage,
       confirmKeyPrompt, cancelKeyPrompt,
     };
   },

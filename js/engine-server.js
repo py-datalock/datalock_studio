@@ -36,6 +36,76 @@ function _detectDefaultBaseUrl() {
 
 let baseUrl = _detectDefaultBaseUrl();
 
+// Na primeira conexão logo depois do processo subir, é comum a primeira
+// requisição real (não o /health, que já teve sucesso) falhar e uma
+// tentativa manual logo em seguida dar certo — no Windows, o motivo mais
+// comum é o firewall mostrar (ou processar, mesmo sem mostrar) o aviso de
+// "permitir este programa na rede" na primeira conexão de um processo
+// recém-iniciado; antivírus/proxy de rede também podem interceptar só a
+// primeira tentativa. Isso costuma se manifestar como a resposta não
+// sendo JSON válido (uma página de bloqueio, ou a conexão sendo cortada
+// no meio) — diferente de um erro "de verdade" do nosso próprio backend,
+// que sempre devolve `{"detail": "..."}`. Uma tentativa extra automática,
+// com um pequeno atraso, resolve o mesmo jeito que "tentar de novo"
+// resolve manualmente, sem a pessoa precisar perceber e clicar de novo.
+async function _fetchWithRetry(input, init, { retries = 1, delayMs = 700 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (err) {
+      lastErr = err; // erro de rede de verdade (ex.: conexão recusada) — tenta de novo
+    }
+    if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw lastErr;
+}
+
+/** Lê o corpo de erro; se não for JSON válido, é sinal de algo "no meio do
+ * caminho" (firewall, antivírus, proxy) em vez de um erro do nosso próprio
+ * backend — o chamador decide se vale tentar de novo com base nisso. */
+async function _readErrorDetail(res) {
+  try {
+    const data = await res.json();
+    return { detail: data.detail || null, wasJson: true };
+  } catch {
+    return { detail: null, wasJson: false };
+  }
+}
+
+/**
+ * Formata o campo "detail" de um erro do FastAPI numa string legível —
+ * NUNCA passa o valor cru pra `new Error(...)`. Isso importa porque o
+ * `Error()` do JS converte o argumento pra string na hora da construção
+ * (não depois, quando alguém lê `.message`): se "detail" for a lista de
+ * erros de validação que o FastAPI devolve num 422
+ * (`[{loc, msg, type}, ...]`), `new Error(essaLista)` vira literalmente
+ * o texto "[object Object]" — a informação já se perde ali, não dá pra
+ * recuperar tratando `.message` depois. Formatar ANTES resolve de vez.
+ */
+function _formatDetail(rawDetail, fallback) {
+  if (!rawDetail) return fallback;
+  if (typeof rawDetail === "string") return rawDetail;
+  if (Array.isArray(rawDetail)) {
+    // Formato de erro de validação do FastAPI/Pydantic: [{loc, msg, type}, ...]
+    // Inclui o NOME DO CAMPO (loc) na mensagem — sem isso, um erro como
+    // "Field required" sozinho não diz qual campo, dificultando muito
+    // diagnosticar (é só o texto genérico que o Pydantic usa pra qualquer
+    // campo obrigatório ausente, não algo específico desta aplicação).
+    const parts = rawDetail.map((d) => {
+      if (!d || typeof d !== "object") return JSON.stringify(d);
+      const field = Array.isArray(d.loc) ? d.loc.filter((p) => p !== "body").join(".") : null;
+      return field ? `${field}: ${d.msg}` : (d.msg || JSON.stringify(d));
+    });
+    return parts.join("; ") || fallback;
+  }
+  try { return JSON.stringify(rawDetail); } catch { return fallback; }
+}
+
+const _NETWORK_HICCUP_HINT =
+  " (Se isto for logo após abrir o programa: pode ser o aviso do firewall do Windows " +
+  "sobre permitir o datalock Studio na rede — confirme a permissão e tente de novo.)";
+
 export function setServerBaseUrl(url) {
   baseUrl = url;
 }
@@ -44,6 +114,10 @@ export async function isServerAvailable(timeoutMs = 800) {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    // Sem retry aqui de propósito: pra quem só usa a prévia (backend nem
+    // está rodando), isso é o caminho mais comum — repetir só atrasaria a
+    // resposta "não está rodando" sem ganhar nada. O retry automático (ver
+    // _fetchWithRetry) é pra depois de já saber que o backend existe.
     const res = await fetch(`${baseUrl}/health`, { signal: ctrl.signal });
     clearTimeout(t);
     return res.ok;
@@ -53,14 +127,14 @@ export async function isServerAvailable(timeoutMs = 800) {
 }
 
 async function postJson(path, body) {
-  const res = await fetch(`${baseUrl}${path}`, {
+  const res = await _fetchWithRetry(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `Erro do servidor (${res.status})`);
+    const { detail, wasJson } = await _readErrorDetail(res);
+    throw new Error(_formatDetail(detail, `Erro do servidor (${res.status})${wasJson ? "" : _NETWORK_HICCUP_HINT}`));
   }
   return res.json();
 }
@@ -78,10 +152,10 @@ export async function uploadFile(file, key = null) {
   const form = new FormData();
   form.append("file", file);
   if (key) form.append("key", key);
-  const res = await fetch(`${baseUrl}/files/upload`, { method: "POST", body: form });
+  const res = await _fetchWithRetry(`${baseUrl}/files/upload`, { method: "POST", body: form });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao enviar arquivo ao software local.");
+    const { detail, wasJson } = await _readErrorDetail(res);
+    throw new Error(_formatDetail(detail, `Falha ao enviar arquivo ao software local.${wasJson ? "" : _NETWORK_HICCUP_HINT}`));
   }
   const data = await res.json();
   return data.tables; // [{ session_id, name, columns, preview_rows, total_rows }, ...]
@@ -103,6 +177,11 @@ export async function scanForPii(sessionId) {
   return postJson("/pii/scan", { session_id: sessionId });
 }
 
+/** EDA automática — um resumo (histograma/contagem) por coluna, de uma vez. */
+export async function autoEda(sessionId, steps, salt) {
+  return postJson("/eda/auto", { session_id: sessionId, steps, salt });
+}
+
 /**
  * Reverte colunas strategy="encrypt" — só existe no backend real.
  * `steps` é a receita atual (deve incluir o step de mask que gerou os
@@ -117,18 +196,20 @@ export async function unmask(sessionId, steps, columns, salt) {
  * Exporta o resultado da receita para um arquivo — inclui formatos
  * exclusivos do software completo (.dlk single/multi, criptografado ou não).
  */
-export async function exportResult(sessionId, steps, context, exportOptions) {
-  const res = await fetch(`${baseUrl}/pipeline/export`, {
+export async function exportResult(sessionId, steps, context, exportOptions, frames = null) {
+  const res = await _fetchWithRetry(`${baseUrl}/pipeline/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       session_id: sessionId, steps, salt: context.salt || null,
       key: context.key || null, export: exportOptions,
+      // várias abas num .dlk só: [{session_id, steps, name}] — ver /pipeline/export
+      frames,
     }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `Falha ao exportar (${res.status})`);
+    throw new Error(_formatDetail(detail.detail, `Falha ao exportar (${res.status})`));
   }
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") || "";
@@ -171,7 +252,7 @@ export async function dbWrite(sessionId, steps, salt, connectionId, table, mode,
 // ── Automações (jobs — só backend) ────────────────────────────────────────
 
 export async function listJobs() {
-  const res = await fetch(`${baseUrl}/jobs`);
+  const res = await _fetchWithRetry(`${baseUrl}/jobs`);
   if (!res.ok) throw new Error("Falha ao listar automações.");
   return (await res.json()).jobs;
 }
@@ -181,41 +262,41 @@ export async function createJob(jobDraft) {
 }
 
 export async function updateJob(jobId, jobDraft) {
-  const res = await fetch(`${baseUrl}/jobs/${jobId}`, {
+  const res = await _fetchWithRetry(`${baseUrl}/jobs/${jobId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(jobDraft),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao salvar a automação.");
+    throw new Error(_formatDetail(detail.detail, "Falha ao salvar a automação."));
   }
   return res.json();
 }
 
 export async function deleteJob(jobId) {
-  const res = await fetch(`${baseUrl}/jobs/${jobId}`, { method: "DELETE" });
+  const res = await _fetchWithRetry(`${baseUrl}/jobs/${jobId}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Falha ao remover a automação.");
   return res.json();
 }
 
 export async function setJobEnabled(jobId, enabled) {
-  const res = await fetch(`${baseUrl}/jobs/${jobId}/${enabled ? "enable" : "disable"}`, { method: "POST" });
+  const res = await _fetchWithRetry(`${baseUrl}/jobs/${jobId}/${enabled ? "enable" : "disable"}`, { method: "POST" });
   if (!res.ok) throw new Error("Falha ao atualizar a automação.");
   return res.json();
 }
 
 export async function runJobNow(jobId) {
-  const res = await fetch(`${baseUrl}/jobs/${jobId}/run-now`, { method: "POST" });
+  const res = await _fetchWithRetry(`${baseUrl}/jobs/${jobId}/run-now`, { method: "POST" });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao rodar a automação.");
+    throw new Error(_formatDetail(detail.detail, "Falha ao rodar a automação."));
   }
   return res.json();
 }
 
 export async function jobRuns(jobId) {
-  const res = await fetch(`${baseUrl}/jobs/${jobId}/runs`);
+  const res = await _fetchWithRetry(`${baseUrl}/jobs/${jobId}/runs`);
   if (!res.ok) throw new Error("Falha ao buscar o histórico.");
   return (await res.json()).runs;
 }
@@ -223,14 +304,14 @@ export async function jobRuns(jobId) {
 // ── Exploração de dados, relatório LGPD, ferramentas .dlk, varredura ──────
 
 export async function complianceReport(sessionId, steps, salt, options) {
-  const res = await fetch(`${baseUrl}/pii/compliance-report`, {
+  const res = await _fetchWithRetry(`${baseUrl}/pii/compliance-report`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, steps, salt, ...options }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao gerar o relatório.");
+    throw new Error(_formatDetail(detail.detail, "Falha ao gerar o relatório."));
   }
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") || "";
@@ -250,10 +331,10 @@ export async function dlkInspect(file, key) {
   const form = new FormData();
   form.append("file", file);
   if (key) form.append("key", key);
-  const res = await fetch(`${baseUrl}/dlk/inspect`, { method: "POST", body: form });
+  const res = await _fetchWithRetry(`${baseUrl}/dlk/inspect`, { method: "POST", body: form });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao inspecionar o arquivo.");
+    throw new Error(_formatDetail(detail.detail, "Falha ao inspecionar o arquivo."));
   }
   return res.json();
 }
@@ -263,10 +344,10 @@ export async function dlkRekey(file, oldKey, newKey) {
   form.append("file", file);
   form.append("old_key", oldKey);
   form.append("new_key", newKey);
-  const res = await fetch(`${baseUrl}/dlk/rekey`, { method: "POST", body: form });
+  const res = await _fetchWithRetry(`${baseUrl}/dlk/rekey`, { method: "POST", body: form });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao trocar a chave.");
+    throw new Error(_formatDetail(detail.detail, "Falha ao trocar a chave."));
   }
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") || "";
@@ -285,16 +366,16 @@ export async function auditConfigure(enabled, path, webhook) {
 }
 
 export async function auditStatus() {
-  const res = await fetch(`${baseUrl}/audit/status`);
+  const res = await _fetchWithRetry(`${baseUrl}/audit/status`);
   if (!res.ok) throw new Error("Falha ao consultar o status da auditoria.");
   return res.json();
 }
 
 export async function auditLog() {
-  const res = await fetch(`${baseUrl}/audit/log`);
+  const res = await _fetchWithRetry(`${baseUrl}/audit/log`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || "Falha ao buscar a trilha de auditoria.");
+    throw new Error(_formatDetail(detail.detail, "Falha ao buscar a trilha de auditoria."));
   }
   return res.json();
 }
@@ -309,4 +390,6 @@ export const engineInfo = {
   supportsEncrypt: true,
   supportsDlk: true,
   supportsDb: true,
+  supportsDiff: true,
+  supportsKAnonymity: true,
 };

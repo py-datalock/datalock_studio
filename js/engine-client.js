@@ -10,6 +10,8 @@
 
 import * as DF from "./dataframe.js";
 import { scanTable } from "./pii-detect.js";
+import * as Audit from "./audit-trail.js";
+import { evaluateRisk as _evaluateRisk } from "./risk-score.js";
 
 /**
  * Roda uma lista de steps (habilitados) sobre uma tabela inicial,
@@ -56,30 +58,62 @@ async function applyStep(table, step, context) {
     case "merge_columns": return DF.mergeColumns(table, step.columns, step.separator, step.into);
     case "groupby": return DF.groupBy(table, step.by, step.aggregations);
     case "pivot": return DF.pivot(table, step.on, step.index, step.values, step.agg_fn);
+    case "value_counts": return DF.valueCounts(table, step.column, step.normalize, step.n || 20);
+    case "corr": return DF.corrMatrix(table);
+    case "describe": return DF.describeTable(table);
     case "pii_scan":
       // Informativo — não transforma a tabela, só anexa o relatório no trace via exceção controlada
       return table;
     case "mask": {
-      if (!context.salt && step.strategy === "hash") {
-        throw new Error("Esta receita usa mask(strategy='hash') mas nenhum salt foi informado para esta execução.");
+      if (!context.salt && (step.strategy === "hash" || step.strategy === "encrypt")) {
+        throw new Error(`Esta receita usa mask(strategy='${step.strategy}') mas nenhum salt foi informado para esta execução.`);
       }
-      return DF.maskColumns(table, {
-        columns: step.columns,
-        strategy: step.strategy,
-        salt: context.salt,
-        rowsConditions: step.rows ? step.rows.conditions : null,
-        rowsLogic: step.rows ? (step.rows.logic || "and") : "and",
-        piiKindByColumn: step.piiKindByColumn || {},
-      });
+      let masked;
+      try {
+        masked = await DF.maskColumns(table, {
+          columns: step.columns,
+          strategy: step.strategy,
+          salt: context.salt,
+          rowsConditions: step.rows ? step.rows.conditions : null,
+          rowsLogic: step.rows ? (step.rows.logic || "and") : "and",
+          piiKindByColumn: step.piiKindByColumn || {},
+        });
+      } catch (err) {
+        for (const column of step.columns || []) Audit.record({ column, technique: step.strategy, status: "error", stepId: step.id });
+        throw err;
+      }
+      // Trilha de auditoria (só metadados: coluna e técnica, nunca valores).
+      for (const column of step.columns || []) Audit.record({ column, technique: step.strategy, stepId: step.id });
+      return masked;
     }
-    case "unmask":
-      throw new Error(
-        "'unmask' (reversão de strategy=encrypt) só está disponível no software completo — " +
-        "veja RECIPE_SCHEMA.md. Exporte esta receita e rode no backend Python."
-      );
+    case "unmask": {
+      // strategy="encrypt" usa AES-SIV, o MESMO formato do software
+      // completo (ver crypto-utils.js) — um valor cifrado lá reverte aqui
+      // normalmente, e vice-versa, desde que salt e coluna sejam os mesmos.
+      if (!context.salt) {
+        throw new Error("'unmask' exige o mesmo salt usado para mascarar.");
+      }
+      return DF.unmaskColumns(table, step.columns, context.salt);
+    }
     case "export":
       // Tratado fora do runRecipe (ver app.js exportTable) — aqui é um no-op
       return table;
+    case "synthetic": {
+      // Modo "rápido", sem dependências — mesma estratégia usada no
+      // software completo quando engine="fast" (ver
+      // recipe_engine.py#_synthetic_fast): colunas de PII reconhecidas
+      // ganham valores novos e válidos; as demais são reamostradas.
+      if (step.engine === "copula") {
+        // Cópula gaussiana — mesma abordagem do software completo
+        // (recipe_engine.py#_synthetic_copula), ver synthetic-copula.js.
+        const { generateCopulaTable } = await import("./synthetic-copula.js");
+        return generateCopulaTable(table, scanTable(table), step.n || table.rows.length, step.seed || 42);
+      }
+      const { generateSyntheticTable } = await import("./synthetic-generator.js");
+      const piiReport = scanTable(table);
+      const n = step.n || table.rows.length;
+      return generateSyntheticTable(table, piiReport, n, step.seed || 42);
+    }
     default:
       throw new Error(`Tipo de step desconhecido: "${step.type}"`);
   }
@@ -90,10 +124,37 @@ export function scanForPii(table) {
   return scanTable(table);
 }
 
+/** EDA automática — ver dataframe.js#autoEda(). */
+export function autoEda(table) {
+  return DF.autoEda(table);
+}
+
+/** Comparação antes/depois — versão simplificada de dd.diff() (ver dataframe.js). */
+export function diffTables(before, after) {
+  return DF.diffTables(before, after);
+}
+
+/** Score composto de risco de reidentificação — porta exata da biblioteca (ver risk-score.js). */
+export function evaluateRisk(table, options) {
+  return _evaluateRisk(table, options);
+}
+
+/** Risco do promotor / registros únicos, exatos por definição (ver dataframe.js). */
+export function reidentificationStats(table, quasiIdentifiers) {
+  return DF.reidentificationStats(table, quasiIdentifiers);
+}
+
+/** k-anonimato simplificado, calculado 100% no navegador (ver dataframe.js). */
+export function kAnonymity(table, quasiIdentifiers) {
+  return DF.kAnonymity(table, quasiIdentifiers);
+}
+
 export const engineInfo = {
   kind: "client",
   label: "Prévia (roda no seu navegador)",
-  supportsEncrypt: false,
-  supportsDlk: false,
-  supportsDb: false,
+  supportsEncrypt: true,   // AES-SIV, compatível de verdade com o software completo (ver crypto-utils.js)
+  supportsDlk: true,       // leitura de qualquer versão; escrita v4 (aberto) e v2 (cifrado, AES-256-GCM) — ver dlk.js
+  supportsDb: true,        // só SQLite (arquivo aberto em memória, via sql.js) — ver sqlite-db.js
+  supportsDiff: true,
+  supportsKAnonymity: true,
 };

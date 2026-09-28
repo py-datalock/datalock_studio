@@ -50,14 +50,67 @@
 </script>
 
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
+
+<!-- CSS crítico INLINE (não depende de baixar css/style.css primeiro) —
+     garante que o conteúdo de #app (que contém, no HTML bruto, os
+     "{{ mustaches }}" do Vue antes de compilar) fique escondido desde o
+     primeiro instante, em qualquer condição de rede. Sem isto, numa
+     conexão lenta ou cache frio, dava pra ver por uma fração de segundo
+     o HTML "cru" com chaves/expressões JS — o que parece (e realmente é)
+     uma tela de código aparecendo por engano. -->
+<style>
+  [v-cloak] { display: none !important; }
+  #dl-boot-splash {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    background: #0f1115; color: #e7e9ee; font-family: system-ui, -apple-system, sans-serif;
+    z-index: 9999;
+  }
+  #dl-boot-splash .dl-boot-icon { font-size: 34px; line-height: 1; }
+  #dl-boot-splash .dl-boot-spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2.5px solid rgba(231,233,238,0.25); border-top-color: #e7e9ee;
+    animation: dl-boot-spin 0.8s linear infinite;
+  }
+  @keyframes dl-boot-spin { to { transform: rotate(360deg); } }
+</style>
 <link rel="stylesheet" href="css/style.css" />
 
-<!-- Dependências (CDN — sem build step; ok para GitHub Pages) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Dependências (CDN — sem build step; ok para GitHub Pages). `defer`
+     evita que o download destes três arquivos bloqueie a primeira
+     renderização da página (a tela de carregamento acima aparece na
+     hora, independente da rede) — a ordem de execução relativa ao
+     `<script type="module">` de app.js é preservada mesmo com `defer`. -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
+
+<!-- Tela de carregamento própria — cobre a fração de segundo entre o
+     HTML aparecer e o Vue terminar de montar (baixar os módulos JS,
+     compilar o template). Removida por app.js assim que a montagem
+     termina (ver onMounted). Fica FORA de #app de propósito, para não
+     depender do próprio Vue já estar rodando. -->
+<div id="dl-boot-splash">
+  <div class="dl-boot-icon">🔒</div>
+  <div class="dl-boot-spinner"></div>
+  <div id="dl-boot-splash-text" style="font-size: 13px; opacity: 0.75;">Carregando datalock Studio…</div>
+</div>
+<script>
+  // Rede de segurança simples: se depois de vários segundos a tela de
+  // carregamento ainda estiver na tela (JS bloqueado por um bloqueador de
+  // anúncios/CDN fora do ar/etc.), troca a mensagem em vez de deixar a
+  // pessoa olhando um spinner para sempre sem explicação. Não depende do
+  // Vue nem de app.js — roda isolado, puro DOM.
+  setTimeout(function () {
+    var el = document.getElementById("dl-boot-splash-text");
+    if (el) {
+      el.textContent = "Ainda carregando… se demorar muito, verifique sua conexão " +
+        "(este site depende de alguns arquivos externos na primeira visita).";
+    }
+  }, 6000);
+</script>
 
 <!-- Conteúdo visível para rastreadores/navegadores SEM JavaScript (a
      maioria dos rastreadores de IA faz fetch puro, sem executar JS — sem
@@ -90,10 +143,16 @@
       <span class="icon" v-html="icon('shield')"></span>
       <strong>datalock Studio</strong> <span class="muted">— no-code</span>
     </div>
-    <div class="engine-badge" :class="engineMode">
-      <span class="dot"></span>
-      {{ engineMode === 'server' ? 'Software completo conectado' : 'Prévia (roda no seu navegador)' }}
+    <div class="engine-badge" :class="engineMode" v-if="engineMode === 'server'">
+      <span class="dot"></span> Software completo conectado
     </div>
+    <button v-else class="engine-badge client connect-btn" :disabled="connectingToServer"
+            @click="connectToLocalSoftware"
+            title="Já rodou o comando &quot;datalock-studio&quot; nesta máquina? Clique para conectar a prévia a ele. O navegador pode pedir permissão para acessar dispositivos na sua rede local — isso é esperado, é só a conexão com o processo rodando na sua própria máquina (127.0.0.1).">
+      <span class="dot"></span>
+      {{ connectingToServer ? 'Procurando o software completo…' : 'Prévia — clique para conectar ao software completo' }}
+    </button>
+    <span v-if="serverConnectError" class="connect-error-note" role="alert">{{ serverConnectError }}</span>
     <div class="topbar-actions">
       <button class="icon-btn theme-toggle" @click="toggleTheme" :title="isDarkNow ? 'Mudar para tema claro' : 'Mudar para tema escuro'">
         <span class="icon" v-html="icon(isDarkNow ? 'sun' : 'moon')"></span>
@@ -108,16 +167,13 @@
               @click="openJobsPanel">
         <span class="icon" v-html="icon('zap')"></span> Automação
       </button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
-              @click="openDlkToolsPanel">
+      <button class="btn ghost" @click="openDlkToolsPanel">
         <span class="icon" v-html="icon('shield-key')"></span> Ferramentas .dlk
       </button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
-              @click="openScanDirPanel">
+      <button class="btn ghost" @click="openScanDirPanel">
         <span class="icon" v-html="icon('folder')"></span> Varrer pasta
       </button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
-              @click="openAuditPanel">
+      <button class="btn ghost" @click="openAuditPanel">
         <span class="icon" v-html="icon('history')"></span> Auditoria
       </button>
       <button class="btn ghost" @click="showAbout = true">
@@ -134,7 +190,7 @@
       <div class="dropzone-icon"><span class="icon" v-html="icon('folder', {size: 40})"></span></div>
       <h1>Arraste um arquivo aqui</h1>
       <p class="muted">CSV, XLSX ou JSON — ou clique para escolher</p>
-      <input ref="fileInput" type="file" accept=".csv,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
+      <input ref="fileInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
       <button class="btn primary" @click="$refs.fileInput.click()">
         <span class="icon" v-html="icon('upload')"></span> Escolher arquivo
       </button>
@@ -159,7 +215,7 @@
           <span class="icon" v-html="icon('x', {size: 13})"></span>
         </button>
       </div>
-      <input ref="addTableInput" type="file" accept=".csv,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
+      <input ref="addTableInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
       <button class="tab-add" @click="$refs.addTableInput.click()" title="Abrir mais uma tabela">
         <span class="icon" v-html="icon('plus', {size: 14})"></span>
       </button>
@@ -172,12 +228,10 @@
       <input ref="openRecipeInput" type="file" accept=".json" @change="onRecipePicked" hidden />
       <span class="sep"></span>
       <button class="btn ghost" @click="showPiiPanel = true"><span class="icon" v-html="icon('search')"></span> Detectar dados pessoais</button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
-              @click="openDiffPanel"><span class="icon" v-html="icon('history')"></span> Ver o que mudou</button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
-              @click="openUnmaskPanel"><span class="icon" v-html="icon('key')"></span> Reverter mascaramento</button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
-              @click="openDbPanel"><span class="icon" v-html="icon('database')"></span> Banco de dados</button>
+      <button class="btn ghost" @click="openEdaPanel"><span class="icon" v-html="icon('bar-chart')"></span> EDA automática</button>
+      <button class="btn ghost" @click="openDiffPanel"><span class="icon" v-html="icon('history')"></span> Ver o que mudou</button>
+      <button class="btn ghost" @click="openUnmaskPanel"><span class="icon" v-html="icon('key')"></span> Reverter mascaramento</button>
+      <button class="btn ghost" @click="openDbPanel"><span class="icon" v-html="icon('database')"></span> Banco de dados</button>
       <span class="grow"></span>
       <div class="salt-box">
         <label>
@@ -211,7 +265,7 @@
           <span class="icon" v-html="icon('repeat', {size: 14})"></span>
         </button>
       </div>
-      <button class="btn success" @click="showExportPanel = true"><span class="icon" v-html="icon('download')"></span> Exportar</button>
+      <button class="btn success" @click="openExportPanel"><span class="icon" v-html="icon('download')"></span> Exportar</button>
     </div>
 
     <div class="main-grid" v-if="activeTab">
@@ -222,10 +276,16 @@
           <strong>{{ activeTab.totalRows.toLocaleString('pt-BR') }}</strong> linhas ·
           <strong>{{ activeTab.columns.length }}</strong> colunas
           <span v-if="activeTab.running" class="running-badge">⏳ recalculando…</span>
-          <span v-if="activeTab.errorMessage" class="error-badge" :title="activeTab.errorMessage">
+          <span v-if="activeTab.errorMessage" class="error-badge" @click="activeTab.errorExpanded = !activeTab.errorExpanded"
+                :title="activeTab.errorExpanded ? '' : activeTab.errorMessage">
             <span class="icon" v-html="icon('alert', {size: 13})"></span> {{ activeTab.errorMessage }}
           </span>
           <span style="flex: 1;"></span>
+          <button v-if="chartableStepType(activeTab)" class="btn tiny ghost" @click="toggleChart"
+                  :title="activeTab.showChart ? 'Ver como tabela' : 'Ver como gráfico'">
+            <span class="icon" v-html="icon(activeTab.showChart ? 'grid' : 'bar-chart', {size: 13})"></span>
+            {{ activeTab.showChart ? 'Tabela' : 'Gráfico' }}
+          </button>
           <div class="secret-field" style="max-width: 220px;">
             <span class="icon" v-html="icon('search', {size: 14})" style="padding-left: 8px; color: var(--text-faint);"></span>
             <input id="grid-search-input" ref="gridSearchInput" type="text" v-model="activeTab.gridSearch" @input="gridSearchChanged"
@@ -244,7 +304,18 @@
             </button>
           </div>
         </div>
-        <div class="grid-scroll">
+        <div v-if="activeTab.errorMessage && activeTab.errorExpanded" class="error-expanded">
+          <span class="icon" v-html="icon('alert', {size: 14})"></span>
+          <span class="error-expanded-text">{{ activeTab.errorMessage }}</span>
+          <button class="btn tiny ghost" @click="copyErrorMessage(activeTab)">Copiar</button>
+          <button class="icon-btn" @click="activeTab.errorExpanded = false" title="Fechar">
+            <span class="icon" v-html="icon('x', {size: 13})"></span>
+          </button>
+        </div>
+        <div v-if="activeTab.showChart" class="chart-wrap">
+          <canvas id="chart-canvas" ref="chartCanvas"></canvas>
+        </div>
+        <div v-else class="grid-scroll">
           <table class="data-grid" v-if="activeTab.previewRows.length">
             <thead>
               <tr>
@@ -580,10 +651,15 @@
           <option value="generalize_date">Generalizar data (manter só o ano)</option>
           <option value="mock_numeric">Substituir por número sintético (aproximado)</option>
           <option value="mock_category">Substituir por categoria sintética (aproximado)</option>
-          <option value="encrypt" :disabled="engineMode !== 'server'">
-            Criptografia reversível — só no software completo
+          <option value="encrypt">
+            Criptografia reversível (AES-SIV) — igual ao software completo, funciona nos dois
           </option>
         </select>
+        <p v-if="draftStep.strategy === 'encrypt'" class="muted" style="font-size: 11.5px;">
+          Reversível por quem tiver o mesmo salt — use "Reverter mascaramento" pra desfazer,
+          na prévia ou no software completo (é o mesmo formato AES-SIV nos dois; só a coluna e o
+          salt usados na hora de mascarar precisam ser os mesmos usados para reverter).
+        </p>
         <template v-if="draftStep.strategy === 'hash'">
           <label>Tratar valor como (define a normalização antes do hash)</label>
           <div v-for="col in draftStep.columns" :key="col" class="condition-row">
@@ -612,7 +688,7 @@
           </div>
           <button class="btn tiny ghost" @click="draftStep.rows.conditions.push({column: activeTab.columns[0], op:'==', value:''})">+ condição</button>
         </div>
-        <p v-if="!salt && draftStep.strategy === 'hash'" class="warn-text">
+        <p v-if="!salt && ['hash','encrypt'].includes(draftStep.strategy)" class="warn-text">
           <span class="icon" v-html="icon('alert', {size: 13})"></span> Informe um salt na barra de ferramentas antes de rodar este passo.
         </p>
       </div>
@@ -698,17 +774,35 @@
 
       <!-- synthetic -->
       <div v-if="draftStep.type === 'synthetic'" class="field-block">
-        <p class="muted">
-          Precisa de pelo menos 100 linhas na tabela atual (o ideal é 500 ou mais).
-          Este passo pode demorar alguns minutos, dependendo do tamanho dos dados.
-          Exige a dependência opcional "ctgan" instalada no software completo.
-        </p>
+        <label>Motor de geração</label>
+        <select v-model="draftStep.engine">
+          <option value="fast">Rápido (bootstrap de linhas) — sem instalar nada; preserva correlações reaproveitando combinações reais</option>
+          <option value="copula">Estatístico (cópula gaussiana) — sem instalar nada; modela a correlação de verdade, gera combinações inéditas</option>
+        </select>
+
+        <template v-if="draftStep.engine === 'copula'">
+          <p class="muted" style="font-size: 11.5px;">
+            Usa <code>numpy</code>+<code>scipy</code> — a própria biblioteca <code>datalock</code>
+            já depende de <code>scipy</code>, então isto não exige instalar nada além do que você
+            já tem. Modela a correlação estatística de verdade entre as colunas numéricas/categóricas
+            (não é rede neural — só captura relação LINEAR entre pares de colunas) e consegue gerar combinações de valores que não existiam na tabela original —
+            ao contrário do motor "Rápido", que só reembaralha linhas que já existiam.
+          </p>
+        </template>
+
+        <template v-if="draftStep.engine === 'fast'">
+          <p class="muted" style="font-size: 11.5px;">
+            Colunas reconhecidas como CPF, CNPJ, e-mail, nome, telefone, CEP, data de nascimento ou
+            RG recebem valores novos e estruturalmente válidos (ex.: CPF com dígito verificador
+            correto), sem nenhuma relação com os originais. As demais colunas vêm de linhas inteiras
+            sorteadas com reposição da tabela original (preserva correlação reaproveitando
+            combinações reais) mais um ruído leve — mas nunca gera uma combinação de valores que
+            não existisse antes. Para isso, use o motor "Estatístico".
+          </p>
+        </template>
+
         <label>Quantas linhas gerar (vazio usa o mesmo total da tabela atual)</label>
         <input type="number" v-model.number="draftStep.n" min="1" placeholder="ex.: 1000" />
-        <label>Épocas de treinamento (mais épocas, mais fiel e mais lento)</label>
-        <input type="number" v-model.number="draftStep.epochs" min="1" />
-        <label class="checkbox-row"><input type="checkbox" v-model="draftStep.mask_result" /> Mascarar o resultado também (recomendado)</label>
-        <input v-if="draftStep.mask_result" type="text" v-model="draftStep.salt" placeholder="salt para o mascaramento" style="font-family: var(--font-mono);" />
       </div>
 
     </div>
@@ -718,13 +812,46 @@
     </div>
   </aside>
 
+  <!-- ══════════════════ PAINEL: EDA automática ══════════════════ -->
+  <div v-if="showEdaPanel && activeTab" class="modal-backdrop" @click.self="closeEdaPanel">
+    <div class="modal extra-wide">
+      <h2><span class="icon" v-html="icon('bar-chart')"></span> EDA automática</h2>
+      <p class="muted" style="margin-top: 0;">
+        Um resumo da tabela ATUAL (depois de rodar a receita) — colunas numéricas viram
+        histograma, colunas com poucos valores distintos viram contagem. Texto livre de alta
+        cardinalidade (nomes, endereços...) fica de fora — não resume bem num gráfico simples.
+      </p>
+      <p v-if="edaLoading" class="muted">Calculando…</p>
+      <p v-if="edaError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ edaError }}</p>
+      <div v-if="edaResult" class="eda-grid">
+        <div v-for="(col, idx) in edaResult.columns" :key="col.name" class="eda-card">
+          <div class="eda-card-title">
+            <span>{{ col.name }}</span>
+            <span class="muted" style="font-weight: 400; font-size: 10.5px;">
+              {{ col.unique.toLocaleString('pt-BR') }} valores únicos · {{ col.nulls.toLocaleString('pt-BR') }} nulos
+            </span>
+          </div>
+          <canvas v-if="col.kind !== 'other'" :id="'eda-chart-' + idx"></canvas>
+          <p v-else class="muted" style="font-size: 11.5px;">
+            Texto livre de alta cardinalidade — sem gráfico simples que resuma bem.
+          </p>
+          <p v-if="col.kind === 'numeric'" class="muted" style="font-size: 10.5px; margin-top: 6px;">
+            média {{ col.stats.mean.toFixed(2) }} · desvio {{ col.stats.std.toFixed(2) }} ·
+            min {{ col.stats.min }} · max {{ col.stats.max }}
+          </p>
+        </div>
+      </div>
+      <div class="modal-actions"><button class="btn ghost" @click="closeEdaPanel">Fechar</button></div>
+    </div>
+  </div>
+
   <!-- ══════════════════ PAINEL: Privacidade / PII ══════════════════ -->
   <div v-if="showPiiPanel && activeTab" class="modal-backdrop" @click.self="showPiiPanel = false">
     <div class="modal">
       <h2><span class="icon" v-html="icon('search')"></span> Dados pessoais detectados</h2>
       <p class="muted">
         Heurística leve (padrões comuns de CPF/CNPJ/e-mail/telefone/CEP) rodando no navegador —
-        para o relatório completo (k-anonimato, risco de reidentificação), use o software completo.
+        para o relatório com o score composto de risco de reidentificação, use o software completo.
       </p>
       <table class="pii-table" v-if="Object.keys(activeTab.piiReport).length">
         <thead><tr><th>Coluna</th><th>Tipo sugerido</th><th>Risco</th><th>% de correspondência</th></tr></thead>
@@ -738,50 +865,93 @@
       </table>
       <p v-else>Nenhuma coluna com padrão de dado pessoal foi detectada na amostra.</p>
 
-      <template v-if="engineMode === 'server'">
-        <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
-          <label>Relatório de conformidade LGPD</label>
-          <input type="text" v-model="complianceOrg" placeholder="nome da organização (opcional)" />
-          <input type="text" v-model="complianceDataset" placeholder="nome do dataset (opcional)" />
-          <select v-model="complianceFormat">
-            <option value="html">HTML</option>
-            <option value="json">JSON</option>
-            <option value="pdf">PDF (exige weasyprint no software)</option>
-          </select>
-          <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
-            <button class="btn tiny primary" @click="generateComplianceReport">Gerar e baixar</button>
-          </div>
-          <p v-if="complianceError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ complianceError }}</p>
+      <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
+        <label>Relatório de conformidade LGPD</label>
+        <input type="text" v-model="complianceOrg" placeholder="nome da organização (opcional)" />
+        <input type="text" v-model="complianceDataset" placeholder="nome do dataset (opcional)" />
+        <select v-model="complianceFormat">
+          <option value="html">HTML</option>
+          <option value="json">JSON</option>
+          <option value="pdf">PDF</option>
+        </select>
+        <p v-if="engineMode !== 'server'" class="muted" style="font-size: 11px;">
+          Versão simplificada, gerada no navegador (lista as colunas com indício de dado
+          pessoal, em HTML, JSON ou PDF). Para o relatório completo, use o software completo.
+        </p>
+        <label style="margin-top: 8px;">
+          Marcar mais colunas como PII manualmente
+          <span class="help-hint" tabindex="0">
+            <span class="icon" v-html="icon('help-circle', {size: 13})"></span>
+            <span class="help-tooltip">
+              A detecção automática usa padrões fixos (CPF, e-mail, telefone...) — texto livre,
+              como endereço ou observações, muitas vezes não é reconhecido sozinho. Marque aqui
+              qualquer coluna que você sabe que é dado pessoal, mesmo que não tenha aparecido na
+              lista acima; ela entra no relatório com risco alto por padrão.
+            </span>
+          </span>
+        </label>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="'manualpii-'+col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="complianceManualPiiColumns" /> {{ col }}
+          </label>
         </div>
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn tiny primary" @click="generateComplianceReport">Gerar e baixar</button>
+        </div>
+        <p v-if="complianceError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ complianceError }}</p>
+      </div>
 
-        <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
-          <label>Avaliação avançada de privacidade</label>
-          <p class="muted" style="font-size: 11.5px;">Marque as colunas quasi-identificadoras (ex.: UF, idade, escolaridade) para calcular k-anonimato e risco de reidentificação.</p>
-          <div class="checkbox-list">
-            <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
-              <input type="checkbox" :value="col" v-model="privacyQuasiIds" /> {{ col }}
-            </label>
-          </div>
-          <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
-            <button class="btn tiny primary" @click="runPrivacyMetrics">Avaliar</button>
-          </div>
-          <p v-if="privacyMetricsError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ privacyMetricsError }}</p>
-          <div v-if="privacyMetricsResult" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-            <div class="grid-meta">
-              <strong>k-anonimato:</strong> k = {{ privacyMetricsResult.kanon.k_anonymity.k_value }}
-              <span class="pii-chip" :class="privacyMetricsResult.kanon.compliant_anpd ? 'low' : 'high'">
-                {{ privacyMetricsResult.kanon.compliant_anpd ? 'conforme ANPD (k≥5)' : 'abaixo de k≥5' }}
-              </span>
-            </div>
-            <div class="grid-meta">
-              <strong>Risco de reidentificação:</strong> {{ (privacyMetricsResult.risk.risk_score * 100).toFixed(0) }}%
-              <span class="pii-chip" :class="{very_low:'low',low:'low',moderate:'medium',high:'high',critical:'high'}[privacyMetricsResult.risk.risk_level] || 'medium'">
-                {{ privacyMetricsResult.risk.risk_level }}
-              </span>
-            </div>
-          </div>
+      <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
+        <label>Avaliação avançada de privacidade</label>
+        <p class="muted" style="font-size: 11.5px;">
+          Marque as colunas quasi-identificadoras (ex.: UF, idade, escolaridade) para calcular
+          k-anonimato e risco de reidentificação.
+        </p>
+        <div class="checkbox-list">
+          <label v-for="col in activeTab.columns" :key="col" class="checkbox-row">
+            <input type="checkbox" :value="col" v-model="privacyQuasiIds" /> {{ col }}
+          </label>
         </div>
-      </template>
+        <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
+          <button class="btn tiny primary" @click="runPrivacyMetrics">Avaliar</button>
+        </div>
+        <p v-if="privacyMetricsError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ privacyMetricsError }}</p>
+        <div v-if="privacyMetricsResult" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+          <div class="grid-meta">
+            <strong>k-anonimato:</strong> k = {{ privacyMetricsResult.kanon.k_anonymity.k_value }}
+            <span class="pii-chip" :class="privacyMetricsResult.kanon.compliant_anpd ? 'low' : 'high'">
+              {{ privacyMetricsResult.kanon.compliant_anpd ? 'conforme ANPD (k≥5)' : 'abaixo de k≥5' }}
+            </span>
+          </div>
+          <div class="grid-meta" v-if="privacyMetricsResult.risk">
+            <strong>Risco de reidentificação:</strong> {{ (privacyMetricsResult.risk.risk_score * 100).toFixed(0) }}%
+            <span class="pii-chip" :class="{very_low:'low',low:'low',moderate:'medium',high:'high',critical:'high'}[privacyMetricsResult.risk.risk_level] || 'medium'">
+              {{ privacyMetricsResult.risk.risk_level }}
+            </span>
+          </div>
+          <p v-if="privacyMetricsResult.risk" class="muted" style="font-size: 12px; margin: 0;">
+            {{ privacyMetricsResult.risk.risk_label }}
+          </p>
+          <ul v-if="privacyMetricsResult.risk && privacyMetricsResult.risk.recommendations && privacyMetricsResult.risk.recommendations.length"
+              class="muted" style="font-size: 11.5px; margin: 0 0 0 16px;">
+            <li v-for="(rec, i) in privacyMetricsResult.risk.recommendations" :key="'rec-'+i">{{ rec }}</li>
+          </ul>
+          <div class="grid-meta" v-if="privacyMetricsResult.prosecutor">
+            <strong>Risco médio (atacante que sabe que a pessoa está na base):</strong>
+            {{ (privacyMetricsResult.prosecutor.avg_risk * 100).toFixed(1) }}% ·
+            <strong>pior caso:</strong> {{ (privacyMetricsResult.prosecutor.max_risk * 100).toFixed(0) }}%
+          </div>
+          <div class="grid-meta" v-if="privacyMetricsResult.prosecutor">
+            <strong>Registros únicos:</strong> {{ privacyMetricsResult.prosecutor.n_unique_records }}
+            ({{ (privacyMetricsResult.prosecutor.pct_unique_records * 100).toFixed(1) }}%) ·
+            <strong>em grupos com menos de 5:</strong> {{ privacyMetricsResult.prosecutor.n_records_below_k5 }}
+          </div>
+          <p v-if="privacyMetricsResult.risk && engineMode !== 'server'" class="muted" style="font-size: 11px;">
+            k-anonimato e score de risco usam a mesma fórmula da biblioteca do software completo. Os números
+            de "risco médio" e "registros únicos" acima são cálculos adicionais, exatos, sobre o mesmo agrupamento.
+          </p>
+        </div>
+      </div>
 
       <div class="modal-actions"><button class="btn primary" @click="showPiiPanel = false">Fechar</button></div>
     </div>
@@ -795,6 +965,10 @@
       <p v-if="diffError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ diffError }}</p>
       <div v-if="diffResult">
         <p><strong>{{ diffResult.summary }}</strong></p>
+        <p v-if="diffResult.structural_only" class="muted" style="font-size: 11.5px;">
+          As linhas mudaram de quantidade (filtro, remoção de duplicadas, etc.) — não dá pra
+          comparar valor a valor nesse caso, só a estrutura (colunas) que mudou, mostrada acima.
+        </p>
         <table class="pii-table">
           <thead><tr><th>Coluna</th><th>Mudou?</th></tr></thead>
           <tbody>
@@ -841,6 +1015,10 @@
 
       <div class="field-block" style="border-top: 1px solid var(--border); padding-top: 14px;">
         <label>Trocar chave de criptografia</label>
+        <p v-if="engineMode !== 'server'" class="muted" style="font-size: 11px;">
+          Na prévia, isso lê o arquivo inteiro, decifra com a chave atual e escreve de novo com a
+          chave nova — funciona para .dlk de uma tabela ou de várias (multi-frame).
+        </p>
         <input ref="dlkRekeyFileInput" type="file" accept=".dlk" @change="onDlkRekeyFilePicked" />
         <input type="text" v-model="dlkRekeyOldKey" placeholder="chave atual" class="secret-mask" style="padding:7px 9px; border:1px solid var(--border); border-radius:var(--radius-sm);" autocomplete="off" data-lpignore="true" />
         <input type="text" v-model="dlkRekeyNewKey" placeholder="chave nova" class="secret-mask" style="padding:7px 9px; border:1px solid var(--border); border-radius:var(--radius-sm);" autocomplete="off" data-lpignore="true" />
@@ -861,8 +1039,18 @@
       <h2><span class="icon" v-html="icon('folder')"></span> Varrer pasta inteira</h2>
       <p class="muted">Procura dados pessoais em todos os arquivos de uma pasta (CSV, Excel, JSON, Parquet, .dlk).</p>
       <div class="field-block">
-        <label>Caminho da pasta</label>
-        <input type="text" v-model="scanDirPath" placeholder="ex.: C:\dados\clientes" style="font-family: var(--font-mono);" />
+        <template v-if="engineMode === 'server'">
+          <label>Caminho da pasta</label>
+          <input type="text" v-model="scanDirPath" placeholder="ex.: C:\dados\clientes" style="font-family: var(--font-mono);" />
+        </template>
+        <template v-else>
+          <label>Pasta</label>
+          <input type="file" webkitdirectory directory multiple @change="onScanDirPicked" />
+          <p class="muted" style="font-size: 11px;">
+            Os arquivos são lidos aqui no seu navegador — nada é enviado a lugar nenhum.
+            <span v-if="scanDirFolderName">Selecionada: <strong>{{ scanDirFolderName }}</strong>.</span>
+          </p>
+        </template>
         <label class="checkbox-row"><input type="checkbox" v-model="scanDirRecursive" /> Incluir subpastas</label>
         <label>Risco mínimo a mostrar</label>
         <select v-model="scanDirMinRisk">
@@ -888,6 +1076,12 @@
             </tr>
           </tbody>
         </table>
+        <div v-if="scanDirResult.skipped && Object.keys(scanDirResult.skipped).length" style="margin-top: 8px;">
+          <p class="muted" style="font-size: 11.5px;">Ignorados:</p>
+          <ul class="muted" style="font-size: 11.5px; margin: 2px 0 0 16px;">
+            <li v-for="(why, path) in scanDirResult.skipped" :key="'sk-'+path">{{ path.split(/[\\/]/).pop() }} — {{ why }}</li>
+          </ul>
+        </div>
       </div>
       <div class="modal-actions"><button class="btn ghost" @click="showScanDirPanel = false">Fechar</button></div>
     </div>
@@ -901,11 +1095,22 @@
 
       <div class="field-block">
         <label class="checkbox-row"><input type="checkbox" v-model="auditEnabled" /> Ativar a trilha de auditoria</label>
+        <p v-if="engineMode !== 'server'" class="muted" style="font-size: 11px;">
+          Na prévia o registro fica só nesta aba (guarda coluna e técnica, nunca os valores) e some ao
+          fechar a página — use "Salvar" para baixar o arquivo assinado antes de sair.
+        </p>
         <template v-if="auditEnabled">
-          <label>Pasta para gravar automaticamente (opcional)</label>
-          <input type="text" v-model="auditPath" placeholder="ex.: C:\auditoria" style="font-family: var(--font-mono);" />
+          <template v-if="engineMode === 'server'">
+            <label>Pasta para gravar automaticamente (opcional)</label>
+            <input type="text" v-model="auditPath" placeholder="ex.: C:\auditoria" style="font-family: var(--font-mono);" />
+          </template>
           <label>Webhook — recebe cada evento via HTTP (opcional)</label>
           <input type="text" v-model="auditWebhook" placeholder="https://..." style="font-family: var(--font-mono);" />
+          <p v-if="engineMode !== 'server' && auditWebhook" class="warn-text">
+            <span class="icon" v-html="icon('alert', {size: 13})"></span>
+            Com um webhook, cada evento (coluna + técnica, sem valores) sai do seu navegador para essa URL.
+            O navegador não deixa confirmar a entrega, e o destino precisa aceitar POST simples.
+          </p>
         </template>
         <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
           <button class="btn tiny primary" @click="applyAuditConfig">Aplicar</button>
@@ -930,11 +1135,11 @@
         </table>
         <p v-else class="muted">Nenhum evento ainda — faça um mascaramento para ver aparecer aqui.</p>
 
-        <label style="margin-top: 8px;">Salvar em arquivo (assinado, à prova de adulteração)</label>
-        <input type="text" v-model="auditSavePath" placeholder="caminho do arquivo .json" style="font-family: var(--font-mono);" />
+        <label style="margin-top: 8px;">{{ engineMode === 'server' ? 'Salvar em arquivo (assinado, à prova de adulteração)' : 'Baixar arquivo de auditoria (assinado, à prova de adulteração)' }}</label>
+        <input v-if="engineMode === 'server'" type="text" v-model="auditSavePath" placeholder="caminho do arquivo .json" style="font-family: var(--font-mono);" />
         <input type="text" v-model="auditSaveKey" placeholder="chave de assinatura (opcional, recomendado)" style="font-family: var(--font-mono);" />
         <div class="modal-actions" style="justify-content: flex-start; margin-top: 2px;">
-          <button class="btn tiny primary" @click="doAuditSave">Salvar</button>
+          <button class="btn tiny primary" @click="doAuditSave">{{ engineMode === 'server' ? 'Salvar' : 'Baixar' }}</button>
         </div>
         <p v-if="auditSaveSuccess" class="warn-text" style="color: var(--success);"><span class="icon" v-html="icon('check', {size: 13})"></span> {{ auditSaveSuccess }}</p>
       </div>
@@ -948,9 +1153,11 @@
     <div class="modal">
       <h2><span class="icon" v-html="icon('key')"></span> Reverter mascaramento (unmask)</h2>
       <p class="muted">
-        Só funciona para colunas mascaradas com o método "Criptografia reversível" (encrypt),
-        com o MESMO salt usado para mascarar. Roda a receita atual, reverte, e abre o
-        resultado como uma aba nova — pronta para exportar ou continuar trabalhando nela.
+        Só funciona para colunas mascaradas com "Criptografia reversível" (AES-SIV), com o
+        MESMO salt usado para mascarar — o mesmo formato é usado na prévia e no software
+        completo, então uma coluna mascarada num dos dois reverte no outro normalmente. Roda a
+        receita atual, reverte, e abre o resultado como uma aba nova — pronta para exportar ou
+        continuar trabalhando nela.
       </p>
       <label>Colunas a reverter</label>
       <div class="checkbox-list">
@@ -973,6 +1180,7 @@
 
       <!-- Não conectado: formulário de conexão -->
       <div v-if="!dbConnectionId" class="field-block">
+        <template v-if="engineMode === 'server'">
         <label>String de conexão (URI)</label>
         <div class="secret-field">
           <input type="text" :class="{ 'secret-mask': !dbUriVisible }" v-model="dbUri"
@@ -990,12 +1198,31 @@
             {{ dbConnecting ? 'Conectando…' : 'Conectar' }}
           </button>
         </div>
+        </template>
+        <template v-else>
+          <label>Arquivo SQLite (.sqlite, .sqlite3, .db)</label>
+          <input type="file" accept=".sqlite,.sqlite3,.db,.db3" @change="connectSqliteFile" />
+          <div class="modal-actions" style="justify-content: flex-start; margin-top: 4px;">
+            <button class="btn ghost" :disabled="dbConnecting" @click="connectSqlite(null)">
+              {{ dbConnecting ? 'Abrindo…' : 'Ou criar um banco novo (vazio)' }}
+            </button>
+          </div>
+          <p v-if="dbConnectError" class="warn-text"><span class="icon" v-html="icon('alert', {size: 13})"></span> {{ dbConnectError }}</p>
+          <p class="muted" style="font-size: 11.5px;">
+            Na prévia o banco é aberto <strong>aqui no navegador</strong> (SQLite): o arquivo não é enviado
+            a lugar nenhum, e as alterações ficam só em memória até você baixar o arquivo de volta.
+            PostgreSQL, MySQL e outros bancos em rede exigem o software completo — o navegador não abre
+            conexão direta com eles.
+          </p>
+        </template>
       </div>
 
       <!-- Conectado: ler tabelas / SQL, e (se houver aba ativa) enviar resultado -->
       <template v-else>
         <div class="grid-meta" style="margin-bottom: 12px;">
           <span class="pii-chip low">conectado</span>
+          <span v-if="engineMode !== 'server' && dbBrowserName" style="font-family: var(--font-mono); font-size: 12px;">{{ dbBrowserName }}</span>
+          <button v-if="engineMode !== 'server'" class="btn tiny ghost" @click="downloadSqlite">Baixar .sqlite</button>
           <button class="btn tiny ghost" @click="disconnectDb">Desconectar</button>
         </div>
 
@@ -1074,10 +1301,26 @@
         <option value="csv">CSV</option>
         <option value="xlsx">Excel (.xlsx)</option>
         <option value="json">JSON</option>
-        <option value="parquet" :disabled="engineMode !== 'server'">Parquet — só no software completo</option>
-        <option value="dlk_open" :disabled="engineMode !== 'server'">.dlk sem criptografia — só no software completo</option>
-        <option value="dlk_encrypted" :disabled="engineMode !== 'server'">.dlk criptografado — só no software completo</option>
+        <option value="parquet">Parquet</option>
+        <option value="dlk_open">.dlk sem criptografia</option>
+        <option value="dlk_encrypted">.dlk criptografado (AES-256-GCM)</option>
       </select>
+      <p v-if="exportFormat === 'parquet' && engineMode !== 'server'" class="muted" style="font-size: 11px;">
+        Gerado no navegador (hyparquet) — sem compressão (arquivo um pouco maior que o do
+        software completo, que usa zstd; abre normalmente em qualquer leitor de Parquet).
+      </p>
+      <p v-if="exportFormat.startsWith('dlk_') && engineMode !== 'server'" class="muted" style="font-size: 11px;">
+        Gerado no navegador, no mesmo formato .dlk do software completo — abre em qualquer um
+        dos dois. Sem compressão interna (arquivo um pouco maior).
+      </p>
+      <label v-if="canExportAllTabs" class="checkbox-row">
+        <input type="checkbox" v-model="exportAllTabs" />
+        Juntar todas as {{ tabs.length }} abas abertas neste .dlk (multi-tabela) — cada uma com a sua receita
+      </label>
+      <p v-if="canExportAllTabs && exportAllTabs" class="muted" style="font-size: 11px;">
+        Cada aba vira uma tabela dentro do arquivo, com o nome da aba. Abas que precisam de salt
+        (mascaramento) usam o salt informado no topo.
+      </p>
       <label>Nome do arquivo</label>
       <input type="text" v-model="exportFilename" />
       <div v-if="exportFormat === 'dlk_encrypted'" class="field-block nested">
@@ -1424,6 +1667,11 @@
         precisar mais do valor original; use a reversível só quando alguém
         autorizado for precisar recuperá-lo depois.
       </p>
+      <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
+        A prévia web usa o MESMO formato de criptografia reversível (AES-SIV) do software
+        completo — um valor mascarado aqui reverte lá, e vice-versa, desde que o salt e a
+        coluna sejam os mesmos usados para mascarar.
+      </p>
 
       <h3 style="font-size: 13px; margin-bottom: 4px;">O formato .dlk</h3>
       <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 0;">
@@ -1431,6 +1679,9 @@
         melhorado". Guarda uma ou várias tabelas dentro de um único arquivo,
         com ou sem criptografia. Útil para mandar várias planilhas relacionadas
         de uma vez, ou para arquivar um resultado sensível protegido por senha.
+        A prévia web lê e escreve .dlk no mesmo formato do software completo (só sem a
+        compressão interna dele, o que deixa o arquivo um pouco maior) — abre normalmente
+        nos dois lados.
       </p>
 
       <h3 style="font-size: 13px; margin-bottom: 4px;">Abas</h3>
@@ -1458,8 +1709,9 @@
         </p>
         <ul>
           <li>Todas as estratégias de mascaramento, incluindo <strong>criptografia
-              reversível</strong> e leitura/escrita de <strong>.dlk</strong>, estão
-              disponíveis — sem as restrições da prévia web.</li>
+              reversível</strong> (o mesmo AES-SIV da prévia), leitura/escrita de
+              <strong>.dlk</strong> multi-frame e Parquet com compressão, estão disponíveis aqui —
+              sem as poucas restrições que a prévia web ainda tem (banco de dados, automações).</li>
           <li>Banco de dados e automações também rodam por aqui — ver os botões
               "Banco de dados" e "Automação" na barra superior.</li>
           <li>Os campos de Salt/chave não usam o gerenciador de senhas do
@@ -1475,12 +1727,37 @@
         </p>
         <ul>
           <li>O <strong>hash</strong> usado aqui é byte-a-byte compatível com o motor Python real (mesmo salt → mesmo token).</li>
-          <li>Mascaramento <strong>reversível</strong> (criptografia), leitura/escrita de <strong>.dlk</strong>,
-              conexão com <strong>bancos de dados</strong>, <strong>automações</strong> e volumes muito grandes
-              de dados exigem o <strong>software completo</strong> (motor Python real com Polars) — de
-              propósito, por segurança.</li>
-          <li>As funções sintéticas (número/categoria "mock") aqui são uma aproximação simples — o motor real
-              faz isso de forma estatisticamente mais fiel.</li>
+          <li><strong>Criptografia reversível</strong> (AES-SIV) e <strong>reverter mascaramento</strong> usam o
+              MESMO formato do software completo — não é uma aproximação: um valor cifrado aqui reverte lá, e
+              vice-versa, com o mesmo salt e a mesma coluna.</li>
+          <li>Leitura e escrita de <strong>.dlk</strong> (aberto e criptografado) e de <strong>Parquet</strong>
+              também funcionam aqui, no mesmo formato do software completo — a única diferença prática é que a
+              prévia escreve sem compressão interna (arquivo um pouco maior; abre normalmente nos dois lados).
+              .dlk multi-frame (várias tabelas num arquivo só, aberto ou cifrado): leitura, escrita (marque "Juntar todas as abas" ao exportar) e troca de chave funcionam, testados nos dois sentidos contra a biblioteca Python. Só o multi-frame com controle de acesso por nível (ACL) exige o software completo.</li>
+          <li><strong>Diff (o que mudou)</strong>, <strong>k-anonimato</strong> (com risco médio de reidentificação
+              e registros únicos, calculados de forma exata) e o <strong>relatório de conformidade</strong>
+              (HTML, JSON e PDF) funcionam aqui, 100% no navegador. O <strong>score composto de risco de
+              reidentificação</strong> é a mesma fórmula da biblioteca (conferido campo a campo contra ela); o
+              relatório de conformidade é uma versão simplificada do completo, que fica só no software completo.</li>
+          <li><strong>Varrer pasta</strong> funciona aqui: você escolhe a pasta e os arquivos são lidos localmente
+              (CSV, Excel, JSON, Parquet, .dlk aberto; .dlk cifrado é ignorado, pois a varredura não pede chave).</li>
+          <li><strong>Trilha de auditoria</strong> funciona aqui, mas fica em memória nesta aba (só coluna e
+              técnica, nunca os valores) e some ao fechar a página — baixe o arquivo, assinado com HMAC-SHA256,
+              antes de sair. Não há gravação automática em pasta nem garantia de entrega do webhook.</li>
+          <li><strong>Banco de dados</strong>: aqui só <strong>SQLite</strong> — você abre um arquivo .sqlite/.db (ou
+              cria um novo), lê tabelas ou consultas SQL como abas, envia resultados (adicionar, substituir ou
+              atualizar por chave) e baixa o arquivo de volta. PostgreSQL, MySQL e outros bancos em rede continuam
+              exclusivos do software completo: o navegador não abre conexão direta com eles.</li>
+          <li><strong>Automações</strong> (vigiar pasta, rodar em intervalo) exigem o software completo —
+              precisam de um processo rodando em segundo plano de forma contínua, o que uma aba de navegador não
+              consegue garantir (fecha a aba, a "automação" para).</li>
+          <li>Dados sintéticos: os motores <strong>Rápido</strong> (bootstrap de linhas) e <strong>Estatístico</strong>
+              (cópula gaussiana) rodam aqui com o mesmo algoritmo do software completo. Os valores gerados não
+              coincidem byte a byte com os de lá (o gerador de números aleatórios é outro), mas as distribuições, a
+              correlação e a regeneração de colunas de PII seguem a mesma lógica.</li>
+          <li>A conexão com o software completo (badge no topo) é sempre manual — clique nela para conectar. Ela
+              nunca tenta se conectar sozinha ao carregar a página, para não disparar um pedido de permissão de
+              rede local do navegador sem você pedir.</li>
           <li>Os campos de Salt/chave não usam o gerenciador de senhas do navegador de propósito — evita que ele
               ofereça salvar/preencher automaticamente um salt de anonimização como se fosse uma senha de login.
               Em navegadores baseados em Chromium (Chrome, Edge, Brave), o valor fica visualmente oculto por padrão;

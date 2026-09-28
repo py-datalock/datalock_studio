@@ -63,6 +63,24 @@ export function normalizeForHash(value, kind = "generic") {
   return s.normalize("NFC");
 }
 
+/**
+ * Converte os valores de uma coluna para o texto que o software completo usa antes de hashear/cifrar.
+ * Diferença que importa: o Polars trata uma coluna com QUALQUER valor decimal como Float64 e escreve
+ * os inteiros dela como "20.0" (não "20"); o JavaScript não distingue 20 de 20.0. Sem isto, o hash e a
+ * criptografia de uma coluna decimal davam tokens diferentes nos dois lados. Colunas só de inteiros
+ * ("20") e de texto não mudam.
+ */
+export function pythonStyleValues(values) {
+  let hasFraction = false, allNumeric = true;
+  for (const v of values) {
+    if (v === null || v === undefined || v === "") continue;
+    if (typeof v !== "number") { allNumeric = false; break; }
+    if (Number.isFinite(v) && !Number.isInteger(v)) hasFraction = true;
+  }
+  if (!(allNumeric && hasFraction)) return values;
+  return values.map((v) => (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) ? `${v}.0` : v));
+}
+
 let _hmacKeyCache = new Map(); // salt -> Promise<CryptoKey> (evita re-importar a chave a cada valor)
 
 async function _getHmacKey(salt) {
@@ -118,7 +136,7 @@ export async function hmacToken(salt, normalized) {
  * @returns {Promise<Array<string|null>>}
  */
 export async function hashColumn(values, salt, kind = "generic") {
-  const normalizedValues = values.map((v) => normalizeForHash(v, kind));
+  const normalizedValues = pythonStyleValues(values).map((v) => normalizeForHash(v, kind));
   const uniqueNormalized = [...new Set(normalizedValues.filter((v) => v !== null))];
   const tokenMap = new Map();
   for (const nv of uniqueNormalized) {
@@ -183,4 +201,143 @@ export function validateSaltStrength(salt) {
 export function generateSalt(nBytes = 32) {
   const bytes = crypto.getRandomValues(new Uint8Array(nBytes));
   return _bufferToHex(bytes.buffer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Criptografia reversível (mascaramento "encrypt") — COMPATÍVEL DE VERDADE
+// com o software completo, não uma aproximação
+// ─────────────────────────────────────────────────────────────────────────
+//
+// `strategy="encrypt"` no software completo usa AES-SIV (RFC 5297) — ver
+// `datalock/maskers/reversible.py`, cujo código-fonte foi compartilhado
+// para viabilizar esta implementação. A princípio, "reimplementar AES-SIV
+// em JS" pareceria arriscado demais para uma prévia — mas `@noble/ciphers`
+// já traz uma implementação de AES-SIV própria, auditada e amplamente
+// usada, então não é uma reimplementação nossa: é usar uma biblioteca
+// preparada para isso, iguzalzinho ao Python usar `cryptography`.
+//
+// Testado byte-a-byte contra tokens reais gerados pela biblioteca Python
+// (mesma chave derivada via HKDF, mesmo AAD por coluna, mesmo AES-SIV) —
+// um valor cifrado pelo software completo reverte na prévia, e vice-versa.
+// Isso é diferente do que a versão anterior desta prévia fazia (um esquema
+// próprio, incompatível de propósito) — aqui é o MESMO formato.
+
+const _SIV_HKDF_INFO = "datalock-reversible-mask-v1"; // igual ao Python
+const _SIV_TOKEN_PREFIX = "enc:"; // igual ao Python — marca visual, diferencia de hash
+
+let _sivKeyCache = new Map(); // salt -> Promise<Uint8Array> (64 bytes)
+
+async function _deriveSivKey(salt) {
+  if (_sivKeyCache.has(salt)) return _sivKeyCache.get(salt);
+  const keyPromise = (async () => {
+    const ikm = new TextEncoder().encode(salt);
+    const info = new TextEncoder().encode(_SIV_HKDF_INFO);
+    const baseKey = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+    // salt="" (vazio) de propósito — o Python usa HKDF(salt=None, ...), que
+    // por definição do RFC 5869 equivale a um salt vazio/zerado; testado e
+    // confirmado que produz a MESMA chave que o Python deriva.
+    const bits = await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info }, baseKey, 64 * 8
+    );
+    return new Uint8Array(bits);
+  })();
+  _sivKeyCache.set(salt, keyPromise);
+  return keyPromise;
+}
+
+/** Limpa o cache de chaves AES-SIV — chame ao trocar de salt/sessão por segurança. */
+export function clearSivKeyCache() {
+  _sivKeyCache = new Map();
+}
+
+let _aessivFn = null;
+async function _loadAesSiv() {
+  if (!_aessivFn) {
+    // AES-SIV (RFC 5297, `aessiv`) só existe a partir da 2.x do @noble/ciphers — na 1.x o aes.js exporta
+    // apenas `siv`/`gcmsiv`, e `aessiv` vinha `undefined` ("aessiv is not a function"), quebrando a
+    // criptografia reversível. Por isso este import é @2 e o do ChaCha (dlk.js) segue @1.
+    const mod = await import("https://cdn.jsdelivr.net/npm/@noble/ciphers@2.4.0/aes.js/+esm");
+    _aessivFn = mod.aessiv;
+  }
+  return _aessivFn;
+}
+
+function _b64urlEncode(bytes) {
+  let binary = "";
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_"); // sem strip de '=' — igual ao Python
+}
+function _b64urlDecode(s) {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+const _SIV_NULL_STRINGS = new Set(["", "nan", "none", "null", "na", "n/a", "<na>"]);
+function _isSivNull(value) {
+  if (value === null || value === undefined) return true;
+  return _SIV_NULL_STRINGS.has(String(value).trim().toLowerCase());
+}
+
+/**
+ * Cifra um valor com AES-SIV — mesmo formato do software completo
+ * (`dd.mask(strategy="encrypt")`). Determinístico: mesmo valor + mesmo
+ * salt + mesmo AAD (coluna) → sempre o mesmo token, preservando joins.
+ * @param {string} salt
+ * @param {*} plainValue
+ * @param {string|null} associatedData  Normalmente o nome da coluna — usa
+ *   o MESMO valor ao cifrar e ao reverter, senão a autenticação falha.
+ */
+export async function encryptSivValue(salt, plainValue, associatedData = null) {
+  if (_isSivNull(plainValue)) return null;
+  const key = await _deriveSivKey(salt);
+  const aessiv = await _loadAesSiv();
+  const normalized = String(plainValue).trim().normalize("NFC");
+  const plaintext = new TextEncoder().encode(normalized);
+  const aad = associatedData ? [new TextEncoder().encode(associatedData)] : [];
+  const ct = aessiv(key, ...aad).encrypt(plaintext);
+  return _SIV_TOKEN_PREFIX + _b64urlEncode(ct);
+}
+
+/** Reverte um valor gerado por encryptSivValue() (ou pelo software completo,
+ * com o mesmo salt e associatedData). */
+export async function decryptSivValue(salt, token, associatedData = null) {
+  if (token === null || token === undefined || token === "") return null;
+  const s = String(token).trim();
+  if (_SIV_NULL_STRINGS.has(s.toLowerCase())) return null;
+  if (!s.startsWith(_SIV_TOKEN_PREFIX)) {
+    throw new Error(
+      `Este valor não tem o prefixo esperado ("${_SIV_TOKEN_PREFIX}") — não parece ter sido ` +
+      `cifrado com "Criptografia reversível" (é, por exemplo, um hash HMAC, que é irreversível por design)."`
+    );
+  }
+  const raw = _b64urlDecode(s.slice(_SIV_TOKEN_PREFIX.length));
+  const key = await _deriveSivKey(salt);
+  const aessiv = await _loadAesSiv();
+  const aad = associatedData ? [new TextEncoder().encode(associatedData)] : [];
+  try {
+    const pt = aessiv(key, ...aad).decrypt(raw);
+    return new TextDecoder().decode(pt);
+  } catch {
+    throw new Error(
+      "Não foi possível reverter — o salt está errado, a coluna não é a mesma usada para " +
+      "mascarar, ou o valor foi corrompido/adulterado."
+    );
+  }
+}
+
+/** Cifra uma coluna inteira. `columnName` vira o AAD (igual ao software completo). */
+export async function encryptSivColumn(values, salt, columnName) {
+  const out = [];
+  for (const v of pythonStyleValues(values)) out.push(await encryptSivValue(salt, v, columnName));
+  return out;
+}
+
+/** Reverte uma coluna inteira cifrada por encryptSivColumn(). */
+export async function decryptSivColumn(values, salt, columnName) {
+  const out = [];
+  for (const v of values) out.push(await decryptSivValue(salt, v, columnName));
+  return out;
 }

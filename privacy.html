@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <!--
-  datalock Studio, Copyright © 2026 Leonardo Borges Silva Braga. Todos os direitos
-  reservados. Software proprietário, ver LICENSE na raiz deste repositório.
+  datalock Studio — Copyright © 2026 [SEU NOME/EMPRESA]. Todos os direitos
+  reservados. Software proprietário — ver LICENSE na raiz deste repositório.
 -->
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Política de Privacidade, datalock Studio</title>
+<title>Política de Privacidade — datalock Studio</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
 <link rel="stylesheet" href="css/style.css" />
 <style>
-  /* Estilos só desta página de documento, reaproveita as variáveis de
+  /* Estilos só desta página de documento — reaproveita as variáveis de
      cor/tipografia já definidas em css/style.css (tema claro/escuro
      automático incluído de graça, sem duplicar nada daqui). */
   body { min-height: 100vh; }
@@ -74,31 +74,31 @@
 
 <main class="doc-wrap">
   <h1>Política de Privacidade</h1>
-  <p class="doc-updated">Última atualização: <span class="fill-me">23/09/2026</span></p>
+  <p class="doc-updated">Última atualização: <span class="fill-me">[DATA]</span></p>
 
   <p class="doc-callout">
     <strong>Resumo curto:</strong> o datalock Studio não coleta nem envia
-    os seus dados para lugar nenhum, por padrão, tanto na prévia web
+    os seus dados para lugar nenhum, por padrão — tanto na prévia web
     quanto no software completo. Esta página detalha exatamente o que isso
     significa.
   </p>
 
   <p>
     Esta política descreve como o <strong>datalock Studio</strong>
-    ("o software", "nós") trata dados ao ser usado, tanto na versão que
+    ("o software", "nós") trata dados ao ser usado — tanto na versão que
     roda no navegador ("prévia web") quanto na versão instalável
     ("software completo", incluindo a distribuída pela Microsoft Store).
   </p>
   <p>
     Se você tiver dúvidas sobre esta política, entre em contato:
-    <strong class="fill-me">leoborgesprofissional@gmail.com</strong>.
+    <strong class="fill-me">[SEU E-MAIL OU CANAL DE CONTATO AQUI]</strong>.
   </p>
 
   <h2>1. Quem trata os dados, e onde</h2>
   <p>
-    <strong class="fill-me">Leonardo Borges Silva Braga</strong> é quem
+    <strong class="fill-me">[SEU NOME OU EMPRESA]</strong> é quem
     desenvolve e distribui o datalock Studio. O software é uma ferramenta
-    de <strong>uso local</strong>, os arquivos que você importa,
+    de <strong>uso local</strong> — os arquivos que você importa,
     transforma e anonimiza são processados inteiramente no seu próprio
     computador ou navegador. Nós (desenvolvedores) não temos acesso a
     esses dados, porque eles nunca chegam até nós: não existe um servidor
@@ -118,12 +118,12 @@
       mesmo.</li>
     <li><strong>Bancos de dados</strong> (só no software completo): se
       você configurar uma conexão, o software se conecta diretamente ao
-      banco que você informou, nenhuma credencial ou dado passa por nós
+      banco que você informou — nenhuma credencial ou dado passa por nós
       no meio do caminho.</li>
     <li><strong>Preferências de interface</strong> (tema, cor,
       densidade): salvas localmente no seu navegador/computador
       (<code>localStorage</code>), nunca enviadas para fora. Não são
-      dados pessoais, só configurações visuais.</li>
+      dados pessoais — só configurações visuais.</li>
     <li><strong>Segredos de anonimização</strong> (salt, chave de
       criptografia): digitados por você e usados apenas em memória
       durante o processamento. Nas automações (software completo), esses
@@ -148,7 +148,7 @@
     (<code>127.0.0.1</code>, acessível só pela sua própria máquina) e não
     faz nenhuma chamada de rede para fora, a menos que você mesmo
     configure uma conexão com banco de dados remoto ou uma automação
-    cuja origem/destino seja remota, nesses casos, a conexão é feita
+    cuja origem/destino seja remota — nesses casos, a conexão é feita
     diretamente do seu computador para o destino configurado, nunca
     passando por nós.</p>
   <p><strong>Prévia web:</strong> por rodar num navegador, a prévia
@@ -161,28 +161,39 @@
         <td><a href="https://policies.google.com/privacy" target="_blank" rel="noopener">policies.google.com/privacy</a></td></tr>
       <tr><td>cdnjs (Cloudflare)</td><td>Vue.js, PapaParse, SheetJS</td>
         <td><a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">cloudflare.com/privacypolicy</a></td></tr>
+      <tr><td>jsDelivr</td><td>Bibliotecas carregadas sob demanda, só quando a função é usada: gráficos (Chart.js),
+        leitura/escrita de Parquet e .dlk (Apache Arrow, fflate, lz4js, fzstd, noble-ciphers),
+        SQLite no navegador (sql.js) e geração de PDF (jsPDF)</td>
+        <td><a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net" target="_blank" rel="noopener">jsdelivr.com/terms/privacy-policy-jsdelivr-net</a></td></tr>
     </tbody>
   </table>
   <p>
     Essas requisições expõem ao provedor (Google/Cloudflare) informações
-    técnicas padrão de qualquer requisição web (como seu endereço IP), o
+    técnicas padrão de qualquer requisição web (como seu endereço IP) — o
     mesmo que aconteceria em praticamente qualquer site que usa fontes ou
     bibliotecas hospedadas externamente. <strong>Os dados que você importa
     e processa dentro da prévia não são enviados a esses serviços</strong>
-   , só os arquivos estáticos da própria interface são carregados de lá.
+    — só os arquivos estáticos da própria interface são carregados de lá.
+  </p>
+  <p><strong>Única saída de dados configurável na prévia:</strong> a trilha de
+    auditoria aceita, opcionalmente, um <em>webhook</em>. Se — e somente se —
+    você informar uma URL, cada evento registrado (data, nome da coluna e
+    técnica de mascaramento; nunca os valores dos dados) é enviado por POST
+    para essa URL, direto do seu navegador. Sem webhook configurado, nada
+    disso sai da página.
   </p>
 
   <h2>5. Anonimização e segurança dos dados</h2>
   <p>
     O propósito central do software é justamente proteger dados pessoais
-   , as funções de mascaramento, criptografia e detecção de PII existem
+    — as funções de mascaramento, criptografia e detecção de PII existem
     para isso. Detalhes técnicos de como cada método funciona estão
     documentados no Manual de Uso e Metodologia do projeto.
   </p>
 
   <h2>6. Retenção de dados</h2>
   <p>
-    Não aplicável da nossa parte, como não recebemos nem armazenamos
+    Não aplicável da nossa parte — como não recebemos nem armazenamos
     seus dados, não há nada para retermos ou apagarmos. A retenção dos
     arquivos que você processa é inteiramente controlada por você, no seu
     próprio computador.
@@ -192,8 +203,8 @@
   <p>
     Como o software não processa dados pessoais em nome de terceiros nem
     os centraliza em nenhum sistema nosso, a maioria dos direitos
-    previstos na LGPD (Lei 13.709/2018) e no GDPR, acesso, correção,
-    exclusão, portabilidade, não se aplicam a nós como operadores,
+    previstos na LGPD (Lei 13.709/2018) e no GDPR — acesso, correção,
+    exclusão, portabilidade — não se aplicam a nós como operadores,
     porque nunca chegamos a deter esses dados. Se você usa o software
     para tratar dados pessoais de terceiros (ex.: uma base de clientes da
     sua empresa), <strong>você é o controlador desses dados</strong> para
@@ -209,7 +220,7 @@
 
   <h2>9. Alterações a esta política</h2>
   <p>
-    Esta política pode ser atualizada eventualmente. A data no topo
+    Esta política pode ser atualizada eventualmente — a data no topo
     desta página indica a versão mais recente. Mudanças significativas
     serão refletidas na ficha do software na Microsoft Store (ou onde
     estiver distribuído) antes de entrarem em vigor.
@@ -218,10 +229,20 @@
   <h2>10. Contato</h2>
   <p>
     Dúvidas, solicitações ou preocupações sobre esta política:
-    <strong class="fill-me">leoborgesprofissional@gmail.com</strong>
+    <strong class="fill-me">[SEU E-MAIL OU CANAL DE CONTATO AQUI]</strong>
   </p>
 
-
+  <div class="doc-note">
+    <h3>Nota para quem for publicar esta página (remova antes de publicar)</h3>
+    <p>
+      Preencha os campos em destaque (<span class="fill-me">[DATA]</span>,
+      <span class="fill-me">[SEU NOME OU EMPRESA]</span>,
+      <span class="fill-me">[SEU E-MAIL...]</span>) antes de publicar. Essa
+      é a URL que vai no campo de política de privacidade do Partner
+      Center (Microsoft Store) — publique este arquivo na mesma pasta do
+      <code>index.html</code> no GitHub Pages.
+    </p>
+  </div>
 </main>
 
 </body>
