@@ -57,17 +57,11 @@ python3 -m http.server 8080
 
 ## Como isso conversa com o software completo
 
-A conexão é sempre um clique manual: no cabeçalho da prévia, clique em
-"Prévia — clique para conectar ao software completo". Isso faz um
-`fetch("http://127.0.0.1:8722/health")` — se o
-[software completo](../server/README.md) estiver rodando na mesma
-máquina, a prévia passa a usar o motor real a partir daí. Isso funciona
-mesmo com a prévia publicada no GitHub Pages (um domínio diferente)
-chamando o `localhost` de quem está com a página aberta, porque a
-chamada é feita pelo navegador de quem está usando, não por um servidor
-terceiro — **mas o backend precisa ter essa origem liberada** em
-`~/.datalock_studio/allowed_origins.txt` (ver `server/README.md`), senão
-rejeita a chamada com 403.
+Na prévia hospedada (GitHub Pages) a página não tenta falar com o seu computador ao abrir: isso só
+acontece depois de um clique seu em "conectar ao software completo", que antes explica o pedido de
+permissão do navegador ("acessar outros apps e serviços neste dispositivo"). No programa instalado
+(.exe / Microsoft Store) não há clique nenhum: a própria página é servida pelo motor local e a
+conexão é automática.
 
 **Por que isso não é automático**: fazer essa checagem sozinha, a cada
 carregamento de página, faz um site público conversar com um endereço de

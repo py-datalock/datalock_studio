@@ -108,7 +108,7 @@ function newTab(name, { tableId, columns, previewRows, totalRows }) {
   return reactive({
     id: newTabId(), tableId, name,
     columns, previewRows, totalRows,
-    steps: [], running: false, errorMessage: "", errorExpanded: false, piiReport: {},
+    steps: [], draftKey: "", restoreOffer: null, running: false, errorMessage: "", errorExpanded: false, piiReport: {},
     gridOffset: 0, gridSearch: "", filteredRows: totalRows,
     undoStack: [], redoStack: [], showChart: false,
   });
@@ -133,9 +133,9 @@ function chartableStepType(tab) {
 let _chartInstance = null;
 async function renderTabChart(tab, canvasEl) {
   if (!canvasEl) return;
-  // chart.js/auto já vem com todos os componentes registrados — mais
-  // simples e robusto via CDN do que registrar manualmente cada peça.
-  const { default: Chart } = await import("https://cdn.jsdelivr.net/npm/chart.js@4/auto/+esm");
+  // Chart.js vem empacotado em vendor/ (build UMD, já com todos os componentes) — funciona offline.
+  const Chart = window.Chart;
+  if (!Chart) throw new Error("A biblioteca de gráficos não carregou. Recarregue a página (Ctrl+F5).");
   if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
 
   const kind = chartableStepType(tab);
@@ -173,6 +173,7 @@ createApp({
       theme.value = currentlyDark ? "light" : "dark";
       localStorage.setItem("dl_theme", theme.value);
       applyTheme();
+      syncPrefs();
     }
     const isDarkNow = computed(() => {
       if (theme.value === "dark") return true;
@@ -201,9 +202,9 @@ createApp({
       else document.documentElement.removeAttribute("data-density");
       document.documentElement.setAttribute("data-steps-position", stepsPosition.value);
     }
-    function setAccentColor(id) { accentColor.value = id; localStorage.setItem("dl_accent", id); applyCustomization(); }
-    function setDensity(v) { density.value = v; localStorage.setItem("dl_density", v); applyCustomization(); }
-    function setStepsPosition(v) { stepsPosition.value = v; localStorage.setItem("dl_steps_position", v); applyCustomization(); }
+    function setAccentColor(id) { accentColor.value = id; localStorage.setItem("dl_accent", id); applyCustomization(); syncPrefs(); }
+    function setDensity(v) { density.value = v; localStorage.setItem("dl_density", v); applyCustomization(); syncPrefs(); }
+    function setStepsPosition(v) { stepsPosition.value = v; localStorage.setItem("dl_steps_position", v); applyCustomization(); syncPrefs(); }
     applyCustomization();
 
     // ── Onboarding (primeira abertura) ────────────────────────────────────
@@ -245,6 +246,7 @@ createApp({
     function finishOnboarding() {
       showOnboarding.value = false;
       localStorage.setItem("dl_onboarding_seen", "1");
+      syncPrefs();
     }
     if (!localStorage.getItem("dl_onboarding_seen")) {
       showOnboarding.value = true;
@@ -758,33 +760,207 @@ createApp({
 
     let dragIndex = null;
 
-    // ── Conectar ao software completo (SEMPRE manual — ver README) ───────
-    // Antes, isto rodava sozinho em todo carregamento da página
-    // (`onMounted`), fazendo um `fetch("http://127.0.0.1:8722/health")` em
-    // segundo plano. Isso é exatamente o gatilho do aviso de permissão
-    // "este site quer acessar dispositivos na sua rede local" que
-    // navegadores baseados em Chromium passaram a mostrar — e, pior,
-    // aparecia para TODO MUNDO que abrisse a prévia, mesmo quem nunca
-    // instalou nem pretende instalar o software completo, o que parece
-    // (e é) suspeito para um site que deveria ser só uma prévia estática.
-    // Agora essa checagem só roda quando a própria pessoa clica em
-    // "Conectar ao software completo" — a permissão do navegador, se
-    // aparecer, aparece em resposta a uma ação que a pessoa pediu, não
-    // como efeito colateral de abrir uma aba.
+    // ── Conexão com o software completo ──────────────────────────────────
+    // Dois cenários, tratados de forma diferente de propósito:
+    //
+    // 1) Página servida PELO PRÓPRIO backend (o .exe, a Microsoft Store, ou o
+    //    comando `datalock-studio`): a origem é a mesma do servidor — não existe
+    //    permissão de "rede local" a pedir e a conexão é só detectar o motor.
+    //    Acontece SOZINHA, e a tela de carregamento fica até o motor estar pronto —
+    //    por isso nenhum arquivo pode ser aberto "cedo demais" no motor errado.
+    //
+    // 2) Prévia hospedada (GitHub Pages): SEMPRE um clique da pessoa, precedido de uma explicação.
+    //    O pedido de permissão do navegador ("acessar outros apps e serviços neste dispositivo")
+    //    assusta quando aparece sozinho; por isso nada é tentado ao abrir a página.
+    const SERVED_BY_BACKEND = (() => {
+      try {
+        const { protocol, hostname, port } = window.location;
+        return /^https?:$/.test(protocol) && (hostname === "127.0.0.1" || hostname === "localhost") && !!port;
+      } catch { return false; }
+    })();
+
+    const servedByBackend = SERVED_BY_BACKEND;
+    const engineBooting = ref(SERVED_BY_BACKEND);   // true enquanto o motor local ainda está subindo
     const connectingToServer = ref(false);
     const serverConnectError = ref("");
+    const serverConnectNote = ref("");
+
+    function setBootText(msg) {
+      const el = document.getElementById("dl-boot-splash-text");
+      if (el) el.textContent = msg;
+    }
+
+
+    // ── Preferências e rascunhos em DISCO (só no programa instalado) ─────────
+    // O localStorage é por origem (inclui a porta): se a 8722 estava ocupada e o programa abriu na 8723,
+    // tema/cor/tutorial pareciam sumir. No programa instalado o estado também vive em
+    // ~/.datalock_studio/state.json (ver state.py). Na prévia hospedada nada disso é usado.
+    const PERSIST_TO_DISK = SERVED_BY_BACKEND;
+    const PREF_KEYS = ["dl_theme", "dl_accent", "dl_density", "dl_steps_position", "dl_onboarding_seen"];
+    let _prefsTimer = null;
+
+    function syncPrefs() {
+      if (!PERSIST_TO_DISK || engineMode.value !== "server") return;
+      clearTimeout(_prefsTimer);
+      _prefsTimer = setTimeout(() => {
+        const prefs = {};
+        for (const k of PREF_KEYS) { const v = localStorage.getItem(k); if (v !== null) prefs[k] = v; }
+        engine.state.putPrefs(prefs).catch(() => {});
+      }, 400);
+    }
+
+    /** Disco manda; se o disco ainda está vazio, sobe o que já existia no navegador. */
+    async function hydratePrefs() {
+      try {
+        const res = await engine.state.getPrefs();
+        const disk = (res && res.prefs) || {};
+        if (Object.keys(disk).length) {
+          for (const k of PREF_KEYS) if (disk[k] !== undefined) localStorage.setItem(k, disk[k]);
+          theme.value = localStorage.getItem("dl_theme") || "auto";
+          accentColor.value = localStorage.getItem("dl_accent") || "indigo";
+          density.value = localStorage.getItem("dl_density") || "comfortable";
+          stepsPosition.value = localStorage.getItem("dl_steps_position") || "right";
+          applyTheme(); applyCustomization();
+          if (localStorage.getItem("dl_onboarding_seen")) showOnboarding.value = false;
+        } else {
+          syncPrefs();
+        }
+      } catch { /* sem disco: segue só com o localStorage */ }
+    }
+
+    // Rascunho automático da receita, por arquivo
+    const draftsByKey = reactive({});       // chave do arquivo -> { steps, saved_at }
+    const recentFiles = ref([]);            // [{ name, opened_at, rows }]
+    const _savedDraftJson = new Map();      // chave -> último JSON gravado (evita regravar igual)
+    let _draftTimer = null;
+
+    async function hydrateDrafts() {
+      try {
+        const res = await engine.state.getDrafts();
+        for (const k of Object.keys(draftsByKey)) delete draftsByKey[k];
+        Object.assign(draftsByKey, (res && res.drafts) || {});
+        recentFiles.value = (res && res.recents) || [];
+      } catch { /* ignora */ }
+    }
+
+    function scheduleDraftSave() {
+      if (!PERSIST_TO_DISK || engineMode.value !== "server") return;
+      clearTimeout(_draftTimer);
+      _draftTimer = setTimeout(() => {
+        for (const tab of tabs) {
+          if (!tab.draftKey) continue;
+          if (tab.restoreOffer) {
+            if (!tab.steps.length) continue;   // oferta pendente e nada editado: não sobrescreve o rascunho antigo
+            tab.restoreOffer = null;           // a pessoa começou uma receita nova: a oferta antiga some
+          }
+          const json = JSON.stringify(tab.steps);
+          if (_savedDraftJson.get(tab.draftKey) === json) continue;
+          _savedDraftJson.set(tab.draftKey, json);
+          engine.state.putDraft(tab.draftKey, JSON.parse(json)).catch(() => {});
+        }
+      }, 900);
+    }
+
+    /** Só passos com `type` texto e conhecido; o resto é descartado em vez de quebrar a interface. */
+    function sanitizeSteps(steps) {
+      if (!Array.isArray(steps)) return [];
+      return steps.filter((st) => st && typeof st === "object" && typeof st.type === "string" && st.type.length < 64);
+    }
+    function offerDraftRestore(tab) {
+      const d = draftsByKey[tab.draftKey];
+      const steps = d ? sanitizeSteps(d.steps) : [];
+      if (steps.length) tab.restoreOffer = { steps, savedAt: d.saved_at };
+    }
+    async function restoreDraft(tab) {
+      const offer = tab.restoreOffer;
+      if (!offer) return;
+      tab.restoreOffer = null;
+      activeTabId.value = tab.id;
+      tab.steps.splice(0, tab.steps.length, ...offer.steps.map((st) => ({ ...st, id: st.id || newId() })));
+      await runPipeline();
+      toast("Receita restaurada.");
+    }
+    function dismissDraft(tab) {
+      tab.restoreOffer = null;
+      _savedDraftJson.delete(tab.draftKey);
+      engine.state.deleteDraft(tab.draftKey).catch(() => {});
+      delete draftsByKey[tab.draftKey];
+    }
+    async function clearRecentFiles() {
+      recentFiles.value = [];
+      engine.state.clearRecents().catch(() => {});
+    }
+    function formatDraftDate(unixSeconds) {
+      return unixSeconds ? new Date(unixSeconds * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "";
+    }
+    watch(() => tabs.map((t) => `${t.draftKey}\u0000${JSON.stringify(t.steps)}`), scheduleDraftSave);
+
+
+    // ── Avisos (toasts), atalhos, barra de status ────────────────────────────
+    const toasts = reactive([]);
+    let _toastId = 0;
+    function dismissToast(id) { const i = toasts.findIndex((t) => t.id === id); if (i !== -1) toasts.splice(i, 1); }
+    /** Confirma uma ação com um aviso curto que some sozinho (erros ficam mais tempo). */
+    function toast(message, kind = "ok", ms = kind === "error" ? 7000 : 3200) {
+      const id = ++_toastId;
+      toasts.push({ id, message, kind });
+      if (toasts.length > 4) toasts.shift();
+      setTimeout(() => dismissToast(id), ms);
+    }
+    const showShortcuts = ref(false);
+    const shortcutList = [
+      { keys: "Ctrl O", label: "Abrir arquivo" },
+      { keys: "Ctrl S", label: "Salvar a receita (passos aplicados)" },
+      { keys: "Ctrl Z", label: "Desfazer o último passo" },
+      { keys: "Ctrl Y", label: "Refazer" },
+      { keys: "Ctrl F", label: "Buscar na tabela" },
+      { keys: "Esc", label: "Fechar o painel aberto" },
+      { keys: "Ctrl /", label: "Mostrar esta lista" },
+    ];
+    const exportNeutralize = ref(true);   // proteger contra fórmulas no Excel (CSV/XLSX) — ver export_safety.py
+
+    function openDataFolder() {
+      const api = window.pywebview && window.pywebview.api;
+      if (api && api.open_data_folder) api.open_data_folder().then((ok) => { if (!ok) toast("Não foi possível abrir a pasta.", "error"); });
+      else toast("Disponível só no programa instalado. A pasta é ~/.datalock_studio", "error");
+    }
+
+    // Na prévia hospedada nada é salvo em disco: avisa antes de fechar a aba com receitas em andamento.
+    window.addEventListener("beforeunload", (e) => {
+      if (!SERVED_BY_BACKEND && tabs.some((t) => t.steps.length)) { e.preventDefault(); e.returnValue = ""; }
+    });
+
+    const serverInfo = ref(null);   // { studio_version, datalock_version } do /health
+    const showConnectInfo = ref(false);
+
+    /** Clique no badge: na prévia hospedada explica o pedido de permissão ANTES de disparar a conexão. */
+    function requestConnect() {
+      if (engineMode.value === "server" || connectingToServer.value) return;
+      if (SERVED_BY_BACKEND) { connectToLocalSoftware(); return; }
+      showConnectInfo.value = true;
+    }
+    function confirmConnect() {
+      showConnectInfo.value = false;
+      connectToLocalSoftware();
+    }
 
     async function connectToLocalSoftware() {
       if (engineMode.value === "server" || connectingToServer.value) return;
       connectingToServer.value = true;
       serverConnectError.value = "";
+      serverConnectNote.value = "";
       try {
         const mode = await engine.detect();
         engineMode.value = mode;
-        if (mode !== "server") {
-          serverConnectError.value =
-            "Não encontrei o software completo rodando em http://127.0.0.1:8722. " +
-            "Confirme que você já rodou o comando \"datalock-studio\" nesta máquina.";
+        serverInfo.value = engine.serverInfo;
+        if (mode === "server") {
+          if (tabs.length) {
+            serverConnectNote.value = "Conectado. As tabelas já abertas continuam na prévia — abra o arquivo de novo para usar o motor completo.";
+          }
+        } else {
+          serverConnectError.value = SERVED_BY_BACKEND
+            ? "O motor local não respondeu. Feche e abra o programa de novo; se persistir, veja o arquivo de log em ~/.datalock_studio/desktop.log."
+            : "Não encontrei o software completo em http://127.0.0.1:8722. Confirme que o datalock Studio está aberto nesta máquina.";
         }
       } catch (err) {
         serverConnectError.value = `Falha ao tentar conectar: ${err.message}`;
@@ -793,10 +969,31 @@ createApp({
       }
     }
 
-    onMounted(() => {
-      // Não faz NENHUMA chamada de rede sozinho — engineMode começa (e
-      // fica, até um clique explícito) como "client". Só remove a tela
-      // de carregamento inicial (ver index.html/style.css).
+    /** Espera o backend subir (primeira abertura do .exe: extração, antivírus, import de polars/scipy). */
+    async function waitForLocalEngine(maxSeconds = 45) {
+      const t0 = Date.now();
+      let attempt = 0;
+      while ((Date.now() - t0) / 1000 < maxSeconds) {
+        const mode = await engine.detect();
+        if (mode === "server") { engineMode.value = "server"; serverInfo.value = engine.serverInfo; return true; }
+        attempt += 1;
+        if (attempt === 4) setBootText("Iniciando o motor de dados… a primeira abertura pode levar alguns segundos.");
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return false;
+    }
+
+    onMounted(async () => {
+      if (SERVED_BY_BACKEND) {
+        const ok = await waitForLocalEngine();
+        if (ok) await Promise.all([hydratePrefs(), hydrateDrafts()]);
+        engineBooting.value = false;
+        if (!ok) serverConnectError.value =
+          "O motor local não respondeu. Feche e abra o programa de novo; se persistir, veja ~/.datalock_studio/desktop.log.";
+      }
+      // Prévia hospedada: NENHUMA chamada de rede para o computador da pessoa ao abrir a página.
+      // O navegador só pergunta sobre "acessar outros apps e serviços neste dispositivo" depois de um clique
+      // explícito em "conectar" — e antes do clique a gente explica o que vai aparecer (ver confirmConnect).
       document.getElementById("dl-boot-splash")?.remove();
     });
 
@@ -812,6 +1009,10 @@ createApp({
       }
       if (ctrl && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
         e.preventDefault(); redoStep(); return;
+      }
+      if (ctrl && e.key === "/") { e.preventDefault(); showShortcuts.value = !showShortcuts.value; return; }
+      if (ctrl && e.key.toLowerCase() === "o") {
+        e.preventDefault(); openFilePicker(); return;
       }
       if (ctrl && e.key.toLowerCase() === "s") {
         e.preventDefault();
@@ -855,34 +1056,65 @@ createApp({
       return tab;
     }
 
+    const isLoadingFile = ref(false);
+    const loadingFileName = ref("");
+    const loadError = ref("");          // erro de abertura mostrado na própria tela inicial (sem alert())
+
     async function loadFile(file, opts = {}) {
+      loadError.value = "";
+      isLoadingFile.value = true;
+      loadingFileName.value = file.name;
       try {
         const results = await engine.loadFile(file, opts);
-        for (const res of results) addTabFromResult(res);
+        for (const res of results) {
+          const tab = addTabFromResult(res);
+          tab.draftKey = results.length > 1 ? `${file.name}::${res.name}` : file.name;
+          offerDraftRestore(tab);
+          if (PERSIST_TO_DISK && engineMode.value === "server") engine.state.addRecent(file.name, res.totalRows).catch(() => {});
+        }
+        if (PERSIST_TO_DISK && engineMode.value === "server") hydrateDrafts().then(() => {});
         pendingEncryptedFile.value = null;
         showKeyPrompt.value = false;
         keyPromptValue.value = "";
         keyPromptError.value = "";
+        return true;
       } catch (err) {
         const msg = formatError(err);
         if (/chave \(key\)/i.test(msg) || /criptografad/i.test(msg)) {
           pendingEncryptedFile.value = file;
           showKeyPrompt.value = true;
-          keyPromptError.value = "";
-          return;
+          // Se já foi tentada uma chave, a mensagem é de chave errada — mostra no prompt em vez de reabri-lo "mudo".
+          keyPromptError.value = opts.key ? "Não foi possível abrir com essa chave. Confira e tente de novo." : "";
+          return false;
         }
-        // Sem aba ativa ainda (primeiro arquivo) → mostra no prompt de chave
-        // ou num alerta simples, já que não há onde renderizar na grade.
         if (!tabs.length) {
-          keyPromptError.value = "";
-          alert(`Não foi possível abrir o arquivo: ${msg}`);
+          loadError.value = `Não foi possível abrir "${file.name}": ${msg}`;
         } else {
-          activeTab.value.errorMessage = msg;
+          activeTab.value.errorMessage = `Não foi possível abrir "${file.name}": ${msg}`;
         }
+        return false;
+      } finally {
+        isLoadingFile.value = false;
+        loadingFileName.value = "";
       }
     }
-    function onFilePicked(e) { if (e.target.files[0]) loadFile(e.target.files[0]); }
-    function onDrop(e) { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); }
+
+    /** Abre vários arquivos de uma vez (um por vez, em sequência — cada um vira uma ou mais abas). */
+    async function loadFiles(fileList) {
+      const files = Array.from(fileList || []);
+      for (const f of files) await loadFile(f);
+    }
+    function onFilePicked(e) {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";   // permite escolher o MESMO arquivo de novo depois de fechar a aba
+      loadFiles(files);
+    }
+    function onDrop(e) { if (e.dataTransfer?.files?.length) loadFiles(e.dataTransfer.files); }
+
+    function openFilePicker() {
+      const el = tabs.length ? document.querySelector('input[type="file"][accept*=".csv"]:not([data-scan])') : null;
+      (el || document.querySelector('input[type="file"][accept*=".csv"]'))?.click();
+    }
     const isDraggingOver = ref(false);
 
     async function confirmKeyPrompt() {
@@ -1123,7 +1355,12 @@ async function toggleChart() {
     // ── Rótulos legíveis dos passos ─────────────────────────────────────
     function stepTypeMeta(type) { return STEP_TYPES.find((t) => t.type === type) || { icon: "•", name: type }; }
     function stepLabel(step) { return stepTypeMeta(step.type).name; }
+    /** Nunca derruba a tela: um passo malformado (receita importada, rascunho antigo) mostra um aviso no lugar. */
     function stepDescription(step) {
+      try { return stepDescriptionUnsafe(step); }
+      catch { return "(passo incompleto — edite ou remova)"; }
+    }
+    function stepDescriptionUnsafe(step) {
       switch (step.type) {
         case "select_columns": return step.columns.join(", ") || "(nenhuma coluna escolhida)";
         case "drop_columns": return step.columns.join(", ") || "(nenhuma coluna escolhida)";
@@ -1169,6 +1406,7 @@ async function toggleChart() {
       const tab = activeTab.value;
       const recipe = { version: 1, source: { type: "file", format: "unknown" }, steps: JSON.parse(JSON.stringify(tab.steps)) };
       FileIO.downloadRecipeJson(recipe, tab.name || "receita");
+      toast("Receita salva.");
     }
     async function onRecipePicked(e) {
       const file = e.target.files[0];
@@ -1227,24 +1465,27 @@ async function toggleChart() {
           await engine.exportDlkFrames(
             tabs.map((t) => ({ tableId: t.tableId, steps: JSON.parse(JSON.stringify(t.steps)), name: t.name })),
             { salt: salt.value || null, key: dlkKey.value || null },
-            { format: exportFormat.value, filenameBase: exportFilename.value }
+            { format: exportFormat.value, filenameBase: exportFilename.value, neutralizeFormulas: exportNeutralize.value }
           );
         } else {
           await engine.exportResult(
             tab.tableId,
             JSON.parse(JSON.stringify(tab.steps)),
             { salt: salt.value || null, key: dlkKey.value || null },
-            { format: exportFormat.value, filenameBase: exportFilename.value }
+            { format: exportFormat.value, filenameBase: exportFilename.value, neutralizeFormulas: exportNeutralize.value }
           );
         }
         showExportPanel.value = false;
+        toast("Arquivo exportado.");
       } catch (err) {
         tab.errorMessage = formatError(err);
       }
     }
 
     return {
-      engineMode, connectingToServer, serverConnectError, connectToLocalSoftware,
+      toasts, dismissToast, showShortcuts, shortcutList, exportNeutralize, openDataFolder,
+      recentFiles, clearRecentFiles, restoreDraft, dismissDraft, formatDraftDate, serverInfo,
+      engineMode, engineBooting, servedByBackend, connectingToServer, serverConnectError, serverConnectNote, connectToLocalSoftware, requestConnect, confirmConnect, showConnectInfo,
       tabs, activeTabId, activeTab,
       theme, toggleTheme, isDarkNow, icon,
       accentColorOptions: ACCENT_OPTIONS, accentColor, density, stepsPosition, showSettingsPanel,
@@ -1278,7 +1519,7 @@ async function toggleChart() {
       auditLogEntries, auditLogError, auditSavePath, auditSaveKey, auditSaveSuccess,
       openAuditPanel, applyAuditConfig, refreshAuditLog, doAuditSave,
       pendingEncryptedFile, showKeyPrompt, keyPromptValue, keyPromptVisible, keyPromptError,
-      onFilePicked, onDrop, isDraggingOver, reset, closeTab, selectTab,
+      onFilePicked, onDrop, isDraggingOver, isLoadingFile, loadingFileName, loadError, openFilePicker, reset, closeTab, selectTab,
       GRID_PAGE_SIZE, gridSearchChanged, gridNextPage, gridPrevPage,
       chartableStepType, toggleChart,
       undoStep, redoStep,

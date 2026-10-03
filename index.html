@@ -2,6 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
+<!-- Token da sessão: preenchido pelo programa instalado ao servir esta página; na prévia hospedada fica como está. -->
+<meta name="dl-token" content="__DL_TOKEN__" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>datalock Studio — anonimização e manipulação de dados sem código</title>
 <meta name="description" content="Interface no-code (apontar e clicar) para limpar, cruzar e anonimizar dados pessoais como CPF, CNPJ e e-mail — sem escrever código. Detecção automática de dados pessoais, mascaramento com hash irreversível ou criptografia reversível, conexão com bancos de dados e automações. Roda no navegador ou como software local, sem enviar dados para a nuvem." />
@@ -51,39 +53,21 @@
 
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>" />
 
-<!-- CSS crítico INLINE (não depende de baixar css/style.css primeiro) —
-     garante que o conteúdo de #app (que contém, no HTML bruto, os
-     "{{ mustaches }}" do Vue antes de compilar) fique escondido desde o
-     primeiro instante, em qualquer condição de rede. Sem isto, numa
-     conexão lenta ou cache frio, dava pra ver por uma fração de segundo
-     o HTML "cru" com chaves/expressões JS — o que parece (e realmente é)
-     uma tela de código aparecendo por engano. -->
-<style>
-  [v-cloak] { display: none !important; }
-  #dl-boot-splash {
-    position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 10px;
-    background: #0f1115; color: #e7e9ee; font-family: system-ui, -apple-system, sans-serif;
-    z-index: 9999;
-  }
-  #dl-boot-splash .dl-boot-icon { font-size: 34px; line-height: 1; }
-  #dl-boot-splash .dl-boot-spinner {
-    width: 22px; height: 22px; border-radius: 50%;
-    border: 2.5px solid rgba(231,233,238,0.25); border-top-color: #e7e9ee;
-    animation: dl-boot-spin 0.8s linear infinite;
-  }
-  @keyframes dl-boot-spin { to { transform: rotate(360deg); } }
-</style>
+<!-- Estilo de inicialização em arquivo EXTERNO e bloqueante (ver css/boot.css): esconde o conteúdo cru
+     do Vue e estiliza a tela de carregamento mesmo se estilos inline forem bloqueados. -->
+<link rel="stylesheet" href="css/boot.css" />
 <link rel="stylesheet" href="css/style.css" />
 
-<!-- Dependências (CDN — sem build step; ok para GitHub Pages). `defer`
+<!-- Dependências empacotadas em web/vendor (sem CDN, sem build step — funciona offline no .exe e no GitHub Pages). `defer`
      evita que o download destes três arquivos bloqueie a primeira
      renderização da página (a tela de carregamento acima aparece na
      hora, independente da rede) — a ordem de execução relativa ao
      `<script type="module">` de app.js é preservada mesmo com `defer`. -->
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="vendor/vue.global.prod.js"></script>
+<script defer src="vendor/papaparse.min.js"></script>
+<script defer src="vendor/xlsx.full.min.js"></script>
+<script defer src="vendor/chart.umd.min.js"></script>
+<script defer src="js/boot.js"></script>
 </head>
 <body>
 
@@ -93,24 +77,11 @@
      termina (ver onMounted). Fica FORA de #app de propósito, para não
      depender do próprio Vue já estar rodando. -->
 <div id="dl-boot-splash">
-  <div class="dl-boot-icon">🔒</div>
+  <div class="dl-boot-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#8b88f6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l7 2.5v6c0 5-3 7.8-7 8.5-4-.7-7-3.5-7-8.5V6z"/><path d="M9.2 12l2 2 3.6-3.8"/></svg></div>
   <div class="dl-boot-spinner"></div>
-  <div id="dl-boot-splash-text" style="font-size: 13px; opacity: 0.75;">Carregando datalock Studio…</div>
+  <div id="dl-boot-splash-text">Carregando datalock Studio…</div>
 </div>
-<script>
-  // Rede de segurança simples: se depois de vários segundos a tela de
-  // carregamento ainda estiver na tela (JS bloqueado por um bloqueador de
-  // anúncios/CDN fora do ar/etc.), troca a mensagem em vez de deixar a
-  // pessoa olhando um spinner para sempre sem explicação. Não depende do
-  // Vue nem de app.js — roda isolado, puro DOM.
-  setTimeout(function () {
-    var el = document.getElementById("dl-boot-splash-text");
-    if (el) {
-      el.textContent = "Ainda carregando… se demorar muito, verifique sua conexão " +
-        "(este site depende de alguns arquivos externos na primeira visita).";
-    }
-  }, 6000);
-</script>
+
 
 <!-- Conteúdo visível para rastreadores/navegadores SEM JavaScript (a
      maioria dos rastreadores de IA faz fetch puro, sem executar JS — sem
@@ -143,16 +114,23 @@
       <span class="icon" v-html="icon('shield')"></span>
       <strong>datalock Studio</strong> <span class="muted">— no-code</span>
     </div>
-    <div class="engine-badge" :class="engineMode" v-if="engineMode === 'server'">
-      <span class="dot"></span> Software completo conectado
+    <div class="engine-badge server" v-if="engineMode === 'server'" role="status">
+      <span class="dot"></span> {{ servedByBackend ? 'Motor completo ativo' : 'Software completo conectado' }}
     </div>
-    <button v-else class="engine-badge client connect-btn" :disabled="connectingToServer"
+    <button v-else-if="servedByBackend" class="engine-badge client connect-btn" :disabled="connectingToServer"
             @click="connectToLocalSoftware"
-            title="Já rodou o comando &quot;datalock-studio&quot; nesta máquina? Clique para conectar a prévia a ele. O navegador pode pedir permissão para acessar dispositivos na sua rede local — isso é esperado, é só a conexão com o processo rodando na sua própria máquina (127.0.0.1).">
+            title="O motor local (datalock) não respondeu. Clique para tentar de novo.">
       <span class="dot"></span>
-      {{ connectingToServer ? 'Procurando o software completo…' : 'Prévia — clique para conectar ao software completo' }}
+      {{ connectingToServer ? 'Reconectando ao motor local…' : 'Motor local indisponível — tentar de novo' }}
+    </button>
+    <button v-else class="engine-badge client connect-btn" :disabled="connectingToServer"
+            @click="requestConnect"
+            title="Com o datalock Studio aberto nesta máquina, clique para usar o motor completo. O navegador pode pedir permissão para acessar a rede local — é só a conexão com o programa na sua própria máquina (127.0.0.1). ">
+      <span class="dot"></span>
+      {{ connectingToServer ? 'Procurando o software completo…' : 'Prévia no navegador — conectar ao software completo' }}
     </button>
     <span v-if="serverConnectError" class="connect-error-note" role="alert">{{ serverConnectError }}</span>
+    <span v-else-if="serverConnectNote" class="connect-note" role="status">{{ serverConnectNote }}</span>
     <div class="topbar-actions">
       <button class="icon-btn theme-toggle" @click="toggleTheme" :title="isDarkNow ? 'Mudar para tema claro' : 'Mudar para tema escuro'">
         <span class="icon" v-html="icon(isDarkNow ? 'sun' : 'moon')"></span>
@@ -160,24 +138,24 @@
       <button class="icon-btn" @click="showSettingsPanel = true" title="Personalizar aparência">
         <span class="icon" v-html="icon('settings')"></span>
       </button>
-      <button class="btn ghost" @click="showHelpGuide = true">
-        <span class="icon" v-html="icon('help-circle')"></span> Ajuda
+      <button class="btn ghost" @click="showHelpGuide = true" title="Ajuda">
+        <span class="icon" v-html="icon('help-circle')"></span> <span class="btn-label">Ajuda</span>
       </button>
-      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Só no software completo' : ''"
+      <button class="btn ghost" :disabled="engineMode !== 'server'" :title="engineMode !== 'server' ? 'Automação — só no software completo' : 'Automação'"
               @click="openJobsPanel">
-        <span class="icon" v-html="icon('zap')"></span> Automação
+        <span class="icon" v-html="icon('zap')"></span> <span class="btn-label">Automação</span>
       </button>
-      <button class="btn ghost" @click="openDlkToolsPanel">
-        <span class="icon" v-html="icon('shield-key')"></span> Ferramentas .dlk
+      <button class="btn ghost" @click="openDlkToolsPanel" title="Ferramentas .dlk">
+        <span class="icon" v-html="icon('shield-key')"></span> <span class="btn-label">Ferramentas .dlk</span>
       </button>
-      <button class="btn ghost" @click="openScanDirPanel">
-        <span class="icon" v-html="icon('folder')"></span> Varrer pasta
+      <button class="btn ghost" @click="openScanDirPanel" title="Varrer pasta">
+        <span class="icon" v-html="icon('folder')"></span> <span class="btn-label">Varrer pasta</span>
       </button>
-      <button class="btn ghost" @click="openAuditPanel">
-        <span class="icon" v-html="icon('history')"></span> Auditoria
+      <button class="btn ghost" @click="openAuditPanel" title="Auditoria">
+        <span class="icon" v-html="icon('history')"></span> <span class="btn-label">Auditoria</span>
       </button>
-      <button class="btn ghost" @click="showAbout = true">
-        <span class="icon" v-html="icon('info')"></span> Sobre / limites
+      <button class="btn ghost" @click="showAbout = true" title="Sobre / limites">
+        <span class="icon" v-html="icon('info')"></span> <span class="btn-label">Sobre / limites</span>
       </button>
     </div>
   </header>
@@ -186,24 +164,48 @@
   <section v-if="!tabs.length" class="dropzone-screen"
            @dragover.prevent="isDraggingOver = true" @dragleave.prevent="isDraggingOver = false"
            @drop.prevent="onDrop($event); isDraggingOver = false">
-    <div class="dropzone" :class="{ 'drag-active': isDraggingOver }">
-      <div class="dropzone-icon"><span class="icon" v-html="icon('folder', {size: 40})"></span></div>
-      <h1>Arraste um arquivo aqui</h1>
-      <p class="muted">CSV, XLSX ou JSON — ou clique para escolher</p>
-      <input ref="fileInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
-      <button class="btn primary" @click="$refs.fileInput.click()">
+    <div class="dropzone" :class="{ 'drag-active': isDraggingOver, busy: isLoadingFile }" :aria-busy="isLoadingFile">
+      <div class="dropzone-icon">
+        <span v-if="isLoadingFile" class="spinner" aria-hidden="true"></span>
+        <span v-else class="icon" v-html="icon('folder', {size: 40})"></span>
+      </div>
+      <h1>{{ isLoadingFile ? 'Abrindo o arquivo…' : 'Arraste um arquivo aqui' }}</h1>
+      <p class="muted" v-if="isLoadingFile"><span class="mono-name">{{ loadingFileName }}</span> — arquivos grandes podem levar alguns segundos.</p>
+      <p class="muted" v-else>CSV, XLSX, JSON, Parquet ou .dlk — ou clique para escolher</p>
+      <input ref="fileInput" type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
+      <button class="btn primary" :disabled="isLoadingFile" @click="$refs.fileInput.click()">
         <span class="icon" v-html="icon('upload')"></span> Escolher arquivo
+        <kbd class="kbd">Ctrl O</kbd>
       </button>
+      <div v-if="loadError" class="dropzone-error" role="alert">
+        <span class="icon" v-html="icon('alert', {size: 15})"></span>
+        <span>{{ loadError }}</span>
+      </div>
+      <div v-if="recentFiles.length" class="recent-files">
+        <div class="recent-head">
+          <strong>Abertos recentemente</strong>
+          <button class="link-btn" @click="clearRecentFiles">Limpar</button>
+        </div>
+        <ul>
+          <li v-for="r in recentFiles.slice(0, 5)" :key="r.name">
+            <span class="mono-name">{{ r.name }}</span>
+            <span class="muted">{{ formatDraftDate(r.opened_at) }}</span>
+          </li>
+        </ul>
+        <p class="muted recent-note">Escolha o arquivo de novo: se ele tinha uma receita, ela é oferecida para restaurar.</p>
+      </div>
       <p class="hint">
-        XLSX com várias planilhas e .dlk com várias tabelas abrem automaticamente
-        como abas separadas. Depois de abrir um arquivo, dá pra carregar uma receita
-        salva antes pela barra de ferramentas.
+        XLSX com várias planilhas e .dlk com várias tabelas abrem como abas separadas.
+        Você pode soltar vários arquivos de uma vez. Depois de abrir um, dá pra carregar
+        uma receita salva pela barra de ferramentas.
       </p>
     </div>
   </section>
 
   <!-- ══════════════════ WORKSPACE ══════════════════ -->
-  <div v-else class="workspace">
+  <div v-else class="workspace" :class="{ 'drop-over': isDraggingOver }"
+       @dragover.prevent="isDraggingOver = true" @dragleave.self.prevent="isDraggingOver = false"
+       @drop.prevent="onDrop($event); isDraggingOver = false">
 
     <!-- Barra de abas (uma por tabela aberta) -->
     <div class="tabs-bar">
@@ -215,10 +217,20 @@
           <span class="icon" v-html="icon('x', {size: 13})"></span>
         </button>
       </div>
-      <input ref="addTableInput" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
+      <input ref="addTableInput" type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.json,.parquet,.dlk" @change="onFilePicked" hidden />
       <button class="tab-add" @click="$refs.addTableInput.click()" title="Abrir mais uma tabela">
         <span class="icon" v-html="icon('plus', {size: 14})"></span>
       </button>
+    </div>
+
+    <!-- Receita salva automaticamente para este arquivo -->
+    <div v-if="activeTab && activeTab.restoreOffer" class="restore-banner" role="status">
+      <span class="icon" v-html="icon('history', {size: 15})"></span>
+      <span>Encontrei uma receita salva automaticamente para este arquivo
+        ({{ activeTab.restoreOffer.steps.length }} {{ activeTab.restoreOffer.steps.length === 1 ? 'passo' : 'passos' }},
+        {{ formatDraftDate(activeTab.restoreOffer.savedAt) }}).</span>
+      <button class="btn tiny primary" @click="restoreDraft(activeTab)">Restaurar</button>
+      <button class="btn tiny ghost" @click="dismissDraft(activeTab)">Descartar</button>
     </div>
 
     <!-- Barra de ferramentas -->
@@ -408,6 +420,63 @@
       <div class="modal-actions">
         <button class="btn ghost" @click="cancelKeyPrompt">Cancelar</button>
         <button class="btn primary" @click="confirmKeyPrompt">Abrir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ BARRA DE STATUS ══════════════════ -->
+  <footer class="statusbar" role="contentinfo">
+    <span class="status-item" :class="engineMode === 'server' ? 'ok' : 'warn'">
+      <span class="dot"></span>
+      {{ engineMode === 'server' ? 'Motor completo' : 'Prévia no navegador' }}<template v-if="serverInfo && serverInfo.studio_version"> · v{{ serverInfo.studio_version }}</template>
+    </span>
+    <span class="status-item" v-if="activeTab">
+      {{ (activeTab.filteredRows ?? activeTab.totalRows).toLocaleString('pt-BR') }}
+      <template v-if="activeTab.filteredRows !== undefined && activeTab.filteredRows !== activeTab.totalRows"> de {{ activeTab.totalRows.toLocaleString('pt-BR') }}</template>
+      linhas · {{ activeTab.columns.length }} colunas
+    </span>
+    <span class="status-item" v-if="activeTab">{{ activeTab.steps.length }} {{ activeTab.steps.length === 1 ? 'passo' : 'passos' }}</span>
+    <span class="status-spacer"></span>
+    <button class="status-btn" @click="showShortcuts = true" title="Atalhos de teclado (Ctrl+/)">
+      <span class="icon" v-html="icon('help-circle', {size: 13})"></span> Atalhos
+    </button>
+  </footer>
+
+  <!-- ══════════════════ AVISOS (toasts) ══════════════════ -->
+  <div class="toast-stack" aria-live="polite" aria-atomic="false">
+    <div v-for="t in toasts" :key="t.id" class="toast" :class="t.kind" role="status">
+      <span class="icon" v-html="icon(t.kind === 'error' ? 'alert' : 'check', {size: 15})"></span>
+      <span>{{ t.message }}</span>
+      <button class="toast-x" @click="dismissToast(t.id)" aria-label="Fechar aviso"><span class="icon" v-html="icon('x', {size: 12})"></span></button>
+    </div>
+  </div>
+
+  <!-- ══════════════════ ATALHOS DE TECLADO ══════════════════ -->
+  <div v-if="showShortcuts" class="modal-backdrop" @click.self="showShortcuts = false">
+    <div class="modal">
+      <h2><span class="icon" v-html="icon('layout')"></span> Atalhos de teclado</h2>
+      <table class="shortcut-table">
+        <tr v-for="s in shortcutList" :key="s.keys"><td><kbd class="kbd">{{ s.keys }}</kbd></td><td>{{ s.label }}</td></tr>
+      </table>
+      <div class="modal-actions"><button class="btn primary" @click="showShortcuts = false">Fechar</button></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════ EXPLICAÇÃO ANTES DE CONECTAR (só na prévia hospedada) ══════════════════ -->
+  <div v-if="showConnectInfo" class="modal-backdrop" @click.self="showConnectInfo = false">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="connect-info-title">
+      <h2 id="connect-info-title"><span class="icon" v-html="icon('shield')"></span> Conectar ao software completo</h2>
+      <p>Para usar o motor completo, esta página precisa falar com o datalock Studio <strong>instalado no seu
+        computador</strong>. Ao continuar, o navegador vai mostrar um pedido como:</p>
+      <p class="connect-info-quote">“datalock-studio.tech está solicitando permissão para acessar outros apps e serviços neste dispositivo”</p>
+      <ul class="connect-info-list">
+        <li>É esperado: é só a conexão com o programa na sua própria máquina (<code>127.0.0.1</code>).</li>
+        <li>Nenhum dado seu sai do computador por causa dessa permissão.</li>
+        <li>Se você não instalou o programa, pode cancelar e continuar usando a prévia normalmente.</li>
+      </ul>
+      <div class="modal-actions">
+        <button class="btn ghost" @click="showConnectInfo = false">Agora não</button>
+        <button class="btn primary" @click="confirmConnect">Continuar</button>
       </div>
     </div>
   </div>
@@ -1305,6 +1374,11 @@
         <option value="dlk_open">.dlk sem criptografia</option>
         <option value="dlk_encrypted">.dlk criptografado (AES-256-GCM)</option>
       </select>
+      <label v-if="exportFormat === 'csv' || exportFormat === 'xlsx'" class="check-row" style="margin-top: 8px;">
+        <input type="checkbox" v-model="exportNeutralize" />
+        <span>Proteger contra fórmulas no Excel <span class="muted">(recomendado: células de texto que começam com
+          <code>=</code>, <code>+</code>, <code>-</code> ou <code>@</code> ganham um apóstrofo; números não mudam)</span></span>
+      </label>
       <p v-if="exportFormat === 'parquet' && engineMode !== 'server'" class="muted" style="font-size: 11px;">
         Gerado no navegador (hyparquet) — sem compressão (arquivo um pouco maior que o do
         software completo, que usa zstd; abre normalmente em qualquer leitor de Parquet).
@@ -1701,6 +1775,14 @@
       <h2><span class="icon" v-html="icon('info')"></span> Sobre {{ engineMode === 'server' ? 'o datalock Studio' : 'esta prévia' }}</h2>
 
       <template v-if="engineMode === 'server'">
+        <p v-if="servedByBackend" class="about-folder">
+          <button class="btn tiny ghost" @click="openDataFolder"><span class="icon" v-html="icon('folder', {size: 13})"></span> Abrir pasta de dados e logs</button>
+          <span class="muted">Útil para suporte: o arquivo <code>desktop.log</code> fica ali.</span>
+        </p>
+        <p v-if="serverInfo" class="about-version">
+          datalock Studio <strong>{{ serverInfo.studio_version }}</strong>
+          <template v-if="serverInfo.datalock_version"> · biblioteca datalock <strong>{{ serverInfo.datalock_version }}</strong></template>
+        </p>
         <p>
           Você está usando o <strong>software completo</strong> — o motor Python
           real (Polars + a biblioteca datalock) rodando localmente nesta máquina.
@@ -1755,9 +1837,7 @@
               (cópula gaussiana) rodam aqui com o mesmo algoritmo do software completo. Os valores gerados não
               coincidem byte a byte com os de lá (o gerador de números aleatórios é outro), mas as distribuições, a
               correlação e a regeneração de colunas de PII seguem a mesma lógica.</li>
-          <li>A conexão com o software completo (badge no topo) é sempre manual — clique nela para conectar. Ela
-              nunca tenta se conectar sozinha ao carregar a página, para não disparar um pedido de permissão de
-              rede local do navegador sem você pedir.</li>
+          <li>No programa instalado, a conexão com o motor completo é automática. Na prévia no navegador, clique no badge do topo para conectar.</li>
           <li>Os campos de Salt/chave não usam o gerenciador de senhas do navegador de propósito — evita que ele
               ofereça salvar/preencher automaticamente um salt de anonimização como se fosse uma senha de login.
               Em navegadores baseados em Chromium (Chrome, Edge, Brave), o valor fica visualmente oculto por padrão;
@@ -1772,5 +1852,6 @@
 </div>
 
 <script type="module" src="js/app.js"></script>
+<script type="module" src="js/a11y.js"></script>
 </body>
 </html>

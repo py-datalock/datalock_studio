@@ -44,6 +44,14 @@ function _fromParquetValue(v) {
   return (v >= Number.MIN_SAFE_INTEGER && v <= Number.MAX_SAFE_INTEGER) ? Number(v) : v.toString();
 }
 
+/** As bibliotecas de CSV/Excel vêm de web/vendor (scripts `defer`). Se por qualquer motivo não
+ *  carregaram, devolve uma mensagem que diz o que fazer — em vez de "Papa is not defined". */
+function requireGlobalLib(name, label) {
+  if (typeof globalThis[name] === "undefined") {
+    throw new Error(`A biblioteca de leitura de ${label} não foi carregada. Recarregue a página (Ctrl+F5); no programa instalado, feche e abra de novo.`);
+  }
+}
+
 function inferFormat(filename) {
   const ext = filename.split(".").pop().toLowerCase();
   if (["csv", "tsv", "txt"].includes(ext)) return "csv"; // .txt delimitado (o PapaParse detecta o separador)
@@ -66,6 +74,7 @@ export async function readFileTables(file, key = null) {
 
   if (format === "xlsx") {
     const buffer = await file.arrayBuffer();
+    requireGlobalLib("XLSX", "Excel");
     const workbook = XLSX.read(buffer, { type: "array" });
     return workbook.SheetNames.map((sheetName) => {
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: null });
@@ -117,6 +126,7 @@ export async function readFile(file) {
     const text = await readDelimitedText(file);
     // Duas passadas: a primeira (tudo texto) só decide quais colunas NÃO podem virar número —
     // CEP/CPF/códigos com zeros à esquerda (ver needsTextColumn) — a segunda tipa as demais.
+    requireGlobalLib("Papa", "CSV");
     const rawPass = Papa.parse(text, { header: true, dynamicTyping: false, skipEmptyLines: true });
     const rawFields = rawPass.meta.fields || [];
     const keepText = new Set(rawFields.filter((f) => needsTextColumn(rawPass.data.map((r) => r[f]))));
@@ -136,6 +146,7 @@ export async function readFile(file) {
 
   if (format === "xlsx") {
     const buffer = await file.arrayBuffer();
+    requireGlobalLib("XLSX", "Excel");
     const workbook = XLSX.read(buffer, { type: "array" });
     const firstSheet = workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { defval: null });
@@ -191,14 +202,25 @@ function triggerDownload(blob, filename) {
 }
 
 /** Exporta a tabela para o formato pedido e dispara o download no navegador. */
-export async function exportTable(table, format, filenameBase = "resultado") {
+/**
+ * Célula de TEXTO que o Excel/LibreOffice executaria como fórmula (=, @, +, - seguidos de algo que não é número/telefone)
+ * ganha um apóstrofo na frente (OWASP "CSV Injection"). Espelha server/datalock_studio/export_safety.py.
+ */
+export function neutralizeFormula(v) {
+  if (typeof v !== "string" || !v) return v;
+  if (/^[=@\t\r]/.test(v) || (/^[+\-]/.test(v) && !/^[+\-][\d.,\s%()+\-]*$/.test(v))) return "'" + v;
+  return v;
+}
+
+export async function exportTable(table, format, filenameBase = "resultado", options = {}) {
+  const safe = options.neutralizeFormulas === false ? (v) => v : neutralizeFormula;
   if (format === "csv") {
-    const csv = Papa.unparse({ fields: table.columns, data: table.rows.map((r) => table.columns.map((c) => r[c])) });
+    const csv = Papa.unparse({ fields: table.columns, data: table.rows.map((r) => table.columns.map((c) => safe(r[c]))) });
     triggerDownload(new Blob([csv], { type: "text/csv;charset=utf-8" }), `${filenameBase}.csv`);
     return;
   }
   if (format === "xlsx") {
-    const ws = XLSX.utils.json_to_sheet(table.rows, { header: table.columns });
+    const ws = XLSX.utils.json_to_sheet(table.rows.map((r) => Object.fromEntries(table.columns.map((c) => [c, safe(r[c])]))), { header: table.columns });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Dados");
     XLSX.writeFile(wb, `${filenameBase}.xlsx`);

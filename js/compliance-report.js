@@ -80,7 +80,7 @@ function _renderHtml(data) {
     </tr>`).join("");
 
   return `<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8" />
+<html lang="pt-BR"><head><meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'" />
 <title>${_escapeHtml(data.title)}</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; color: #1a1c22; }

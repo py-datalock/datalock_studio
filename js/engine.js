@@ -25,6 +25,7 @@ class DataEngine {
   constructor() {
     this.mode = "client"; // "client" | "server"
     this.info = ClientEngine.engineInfo;
+    this.serverInfo = null;
     this._tables = new Map();      // tableId -> { sourceTable } (client) | { sessionId } (server)
     this._lastResults = new Map(); // tableId -> último resultado materializado (só modo client)
     this._counter = 0;
@@ -34,7 +35,17 @@ class DataEngine {
     const available = await ServerEngine.isServerAvailable();
     this.mode = available ? "server" : "client";
     this.info = available ? ServerEngine.engineInfo : ClientEngine.engineInfo;
+    this.serverInfo = available ? ServerEngine.getServerInfo() : null;   // { studio_version, datalock_version }
     return this.mode;
+  }
+
+  /** Preferências/rascunhos/recentes em disco — só existem com o motor local; fora dele, não faz nada. */
+  get state() {
+    const noop = async () => null;
+    if (this.mode !== "server") {
+      return { getPrefs: noop, putPrefs: noop, getDrafts: async () => ({ drafts: {}, recents: [] }), putDraft: noop, deleteDraft: noop, addRecent: noop, clearRecents: noop };
+    }
+    return ServerEngine.stateApi;
   }
 
   _newTableId() {
@@ -50,6 +61,42 @@ class DataEngine {
     return entry;
   }
 
+  /** A tabela foi aberta pelo motor do servidor (Python)? Decidido POR TABELA, não pelo modo global —
+   *  assim uma aba aberta antes da conexão nunca é enviada ao servidor sem `session_id`. */
+  _isServerEntry(entry) { return entry.kind === "server"; }
+
+  /** Exige que a aba e o motor atual combinem (ex.: banco do servidor + aba aberta na prévia). */
+  _assertSameEngine(entry, what) {
+    const entryServer = entry.kind === "server";
+    const modeServer = this.mode === "server";
+    if (entryServer !== modeServer) {
+      throw new Error(
+        `${what}: esta tabela foi aberta ${entryServer ? "no software completo" : "na prévia (no navegador)"}, ` +
+        `mas o motor ativo agora é ${modeServer ? "o software completo" : "a prévia"}. Reabra o arquivo para continuar.`
+      );
+    }
+  }
+
+  /**
+   * Chama o backend com o session_id da tabela. Se o servidor devolver "sessão não encontrada"
+   * (sessão descartada por inatividade, ou servidor reiniciado) e ainda tivermos o arquivo original,
+   * reenvia o arquivo em silêncio e tenta de novo — a pessoa não precisa fechar e reabrir a aba.
+   */
+  async _server(tableId, fn) {
+    const entry = this._entry(tableId);
+    try {
+      return await fn(entry.sessionId, entry);
+    } catch (err) {
+      if (/sess[aã]o .*n[aã]o encontrada/i.test(err?.message || "") && entry.file) {
+        const tables = await ServerEngine.uploadFile(entry.file, entry.key || null);
+        const match = tables.find((t) => t.name === entry.name) || tables[0];
+        entry.sessionId = match.session_id;
+        return await fn(entry.sessionId, entry);
+      }
+      throw err;
+    }
+  }
+
   /**
    * Carrega um arquivo. Pode virar MAIS DE UMA tabela (XLSX com várias
    * planilhas, .dlk multi-frame) — sempre devolve uma lista.
@@ -63,7 +110,7 @@ class DataEngine {
       const tables = await ServerEngine.uploadFile(file, options.key || null);
       return tables.map((t) => {
         const tableId = this._newTableId();
-        this._tables.set(tableId, { sessionId: t.session_id });
+        this._tables.set(tableId, { kind: "server", sessionId: t.session_id, file, key: options.key || null, name: t.name });
         return {
           tableId, name: t.name, columns: t.columns,
           previewRows: t.preview_rows, totalRows: t.total_rows,
@@ -74,7 +121,7 @@ class DataEngine {
     return tables.map((t) => {
       const tableId = this._newTableId();
       const sourceTable = { columns: t.columns, rows: t.rows };
-      this._tables.set(tableId, { sourceTable });
+      this._tables.set(tableId, { kind: "client", sourceTable });
       return {
         tableId, name: t.name, columns: t.columns,
         previewRows: t.rows.slice(0, 50), totalRows: t.rows.length,
@@ -89,8 +136,8 @@ class DataEngine {
 
   async run(tableId, steps, context = {}) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") {
-      const res = await ServerEngine.runRecipe(entry.sessionId, steps, context);
+    if (this._isServerEntry(entry)) {
+      const res = await this._server(tableId, (sid) => ServerEngine.runRecipe(sid, steps, context));
       return {
         previewRows: res.preview_rows, totalRows: res.total_rows, columns: res.columns,
         trace: res.trace, filteredRows: res.filtered_rows ?? res.total_rows, offset: res.offset ?? 0,
@@ -113,7 +160,7 @@ class DataEngine {
 
   async scanPii(tableId) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") return ServerEngine.scanForPii(entry.sessionId);
+    if (this._isServerEntry(entry)) return this._server(tableId, (sid) => ServerEngine.scanForPii(sid));
     const table = this._lastResults.get(tableId) || entry.sourceTable;
     return ClientEngine.scanForPii(table);
   }
@@ -121,7 +168,7 @@ class DataEngine {
   /** EDA automática — um resumo por coluna (histograma/contagem), de uma vez. */
   async autoEda(tableId, steps, salt) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") return ServerEngine.autoEda(entry.sessionId, steps, salt);
+    if (this._isServerEntry(entry)) return this._server(tableId, (sid) => ServerEngine.autoEda(sid, steps, salt));
     const { table } = await ClientEngine.runRecipe(entry.sourceTable, steps, { salt });
     return ClientEngine.autoEda(table);
   }
@@ -138,10 +185,10 @@ class DataEngine {
    */
   async unmask(tableId, steps, columns, salt, name = null) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") {
-      const res = await ServerEngine.unmask(entry.sessionId, steps, columns, salt);
+    if (this._isServerEntry(entry)) {
+      const res = await this._server(tableId, (sid) => ServerEngine.unmask(sid, steps, columns, salt));
       const newTableId = this._newTableId();
-      this._tables.set(newTableId, { sessionId: res.session_id });
+      this._tables.set(newTableId, { kind: "server", sessionId: res.session_id });
       return {
         tableId: newTableId, name: res.name, columns: res.columns,
         previewRows: res.preview_rows, totalRows: res.total_rows,
@@ -151,7 +198,7 @@ class DataEngine {
     const DF = await import("./dataframe.js");
     const reverted = await DF.unmaskColumns(table, columns, salt);
     const newTableId = this._newTableId();
-    this._tables.set(newTableId, { sourceTable: reverted });
+    this._tables.set(newTableId, { kind: "client", sourceTable: reverted });
     this._lastResults.set(newTableId, reverted);
     return {
       tableId: newTableId, name: name || "resultado (revertido)", columns: reverted.columns,
@@ -161,8 +208,8 @@ class DataEngine {
 
   async exportResult(tableId, steps, context, exportOptions) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") {
-      const { blob, filename } = await ServerEngine.exportResult(entry.sessionId, steps, context, exportOptions);
+    if (this._isServerEntry(entry)) {
+      const { blob, filename } = await this._server(tableId, (sid) => ServerEngine.exportResult(sid, steps, context, exportOptions));
       FileIO.downloadBlob(blob, filename);
       return;
     }
@@ -181,7 +228,7 @@ class DataEngine {
       FileIO.downloadBlob(new Blob([bytes], { type: "application/octet-stream" }), `${filenameBase}.dlk`);
       return;
     }
-    await FileIO.exportTable(table, exportOptions.format, filenameBase);
+    await FileIO.exportTable(table, exportOptions.format, filenameBase, { neutralizeFormulas: exportOptions.neutralizeFormulas });
   }
 
   /**
@@ -197,7 +244,11 @@ class DataEngine {
     if (!items.length) throw new Error("Nenhuma aba para exportar.");
     const encrypted = exportOptions.format === "dlk_encrypted";
     if (encrypted && !context.key) throw new Error("Exportar como .dlk criptografado exige uma key.");
-    if (this.mode === "server") {
+    const kinds = new Set(items.map((i) => this._entry(i.tableId).kind));
+    if (kinds.size > 1) {
+      throw new Error("Não dá para exportar num só .dlk abas abertas em motores diferentes (prévia e software completo). Reabra as abas da prévia.");
+    }
+    if (kinds.has("server")) {
       // Software completo: o backend roda a receita de cada aba e grava com dd.store(dict, ...).
       const frames = items.map((i) => ({ session_id: this._entry(i.tableId).sessionId, steps: i.steps, name: i.name }));
       const { blob, filename } = await ServerEngine.exportResult(
@@ -268,7 +319,7 @@ class DataEngine {
     if (this.mode === "server") {
       const res = await ServerEngine.dbQueryToSession(connectionId, tableOrSql, name);
       const tableId = this._newTableId();
-      this._tables.set(tableId, { sessionId: res.session_id });
+      this._tables.set(tableId, { kind: "server", sessionId: res.session_id });
       return {
         tableId, name: res.name, columns: res.columns,
         previewRows: res.preview_rows, totalRows: res.total_rows,
@@ -278,7 +329,7 @@ class DataEngine {
     const isTable = Sqlite.listTables(connectionId).tables.includes(String(tableOrSql).trim());
     const { columns, rows } = Sqlite.query(connectionId, tableOrSql);
     const tableId = this._newTableId();
-    this._tables.set(tableId, { sourceTable: { columns, rows } });
+    this._tables.set(tableId, { kind: "client", sourceTable: { columns, rows } });
     return {
       tableId, name: name || (isTable ? String(tableOrSql).trim() : "consulta_sql"), columns,
       previewRows: rows.slice(0, 50), totalRows: rows.length,
@@ -288,8 +339,9 @@ class DataEngine {
   /** Roda a receita da aba e escreve o resultado completo numa tabela do banco (destino). */
   async dbWriteTable(tableId, steps, salt, connectionId, table, mode, upsertOn = null) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") {
-      return ServerEngine.dbWrite(entry.sessionId, steps, salt, connectionId, table, mode, upsertOn);
+    this._assertSameEngine(entry, "Enviar para o banco");
+    if (this._isServerEntry(entry)) {
+      return this._server(tableId, (sid) => ServerEngine.dbWrite(sid, steps, salt, connectionId, table, mode, upsertOn));
     }
     const { table: result } = await ClientEngine.runRecipe(entry.sourceTable, steps, { salt });
     return (await this._sqlite()).writeTable(connectionId, table, result, mode, upsertOn);
@@ -307,7 +359,7 @@ class DataEngine {
   // ── Exploração de dados, relatório LGPD, ferramentas .dlk, varredura ────
   async complianceReport(tableId, steps, salt, options) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") return ServerEngine.complianceReport(entry.sessionId, steps, salt, options);
+    if (this._isServerEntry(entry)) return this._server(tableId, (sid) => ServerEngine.complianceReport(sid, steps, salt, options));
     const { table } = await ClientEngine.runRecipe(entry.sourceTable, steps, { salt });
     const piiReport = ClientEngine.scanForPii(table);
     const { buildComplianceReport } = await import("./compliance-report.js");
@@ -316,11 +368,12 @@ class DataEngine {
   async privacyMetrics(tableId, steps, salt, options) {
     this._requireServer("Avaliação de privacidade");
     const entry = this._entry(tableId);
-    return ServerEngine.privacyMetrics(entry.sessionId, steps, salt, options);
+    this._assertSameEngine(entry, "Avaliação de privacidade");
+    return this._server(tableId, (sid) => ServerEngine.privacyMetrics(sid, steps, salt, options));
   }
   async pipelineDiff(tableId, steps, salt) {
     const entry = this._entry(tableId);
-    if (this.mode === "server") return ServerEngine.pipelineDiff(entry.sessionId, steps, salt);
+    if (this._isServerEntry(entry)) return this._server(tableId, (sid) => ServerEngine.pipelineDiff(sid, steps, salt));
     const { table: after } = await ClientEngine.runRecipe(entry.sourceTable, steps, { salt });
     return ClientEngine.diffTables(entry.sourceTable, after);
   }
@@ -333,6 +386,9 @@ class DataEngine {
    */
   async kAnonymity(tableId, steps, salt, quasiIdentifiers) {
     const entry = this._entry(tableId);
+    if (this._isServerEntry(entry)) {
+      throw new Error("Esta avaliação rápida é só da prévia — no software completo use a avaliação de privacidade completa.");
+    }
     const { table } = await ClientEngine.runRecipe(entry.sourceTable, steps, { salt });
     const raw = ClientEngine.kAnonymity(table, quasiIdentifiers);
     return {

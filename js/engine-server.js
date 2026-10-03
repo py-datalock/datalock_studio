@@ -48,11 +48,24 @@ let baseUrl = _detectDefaultBaseUrl();
 // que sempre devolve `{"detail": "..."}`. Uma tentativa extra automática,
 // com um pequeno atraso, resolve o mesmo jeito que "tentar de novo"
 // resolve manualmente, sem a pessoa precisar perceber e clicar de novo.
+/** Token da sessão: o programa instalado o injeta na própria página (<meta name="dl-token">).
+ *  Na prévia hospedada o valor continua sendo o texto "__DL_TOKEN__" → não há token (e não é exigido). */
+function _token() {
+  try {
+    const v = document.querySelector('meta[name="dl-token"]')?.content || "";
+    return v && !v.startsWith("__") ? v : "";
+  } catch { return ""; }
+}
+function _withAuth(init = {}) {
+  const t = _token();
+  return t ? { ...init, headers: { ...(init.headers || {}), "X-DL-Token": t } } : init;
+}
+
 async function _fetchWithRetry(input, init, { retries = 1, delayMs = 700 } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await fetch(input, init);
+      return await fetch(input, _withAuth(init));
     } catch (err) {
       lastErr = err; // erro de rede de verdade (ex.: conexão recusada) — tenta de novo
     }
@@ -103,14 +116,18 @@ function _formatDetail(rawDetail, fallback) {
 }
 
 const _NETWORK_HICCUP_HINT =
-  " (Se isto for logo após abrir o programa: pode ser o aviso do firewall do Windows " +
-  "sobre permitir o datalock Studio na rede — confirme a permissão e tente de novo.)";
+  " (A resposta não veio do motor local. Se acabou de abrir o programa, aguarde alguns segundos e tente de novo; " +
+  "se persistir, feche e abra o programa e veja o log em ~/.datalock_studio/desktop.log.)";
+
+/** Versões informadas pelo /health (studio_version, datalock_version) — null se ainda não conectou. */
+let _serverInfo = null;
+export function getServerInfo() { return _serverInfo; }
 
 export function setServerBaseUrl(url) {
   baseUrl = url;
 }
 
-export async function isServerAvailable(timeoutMs = 800) {
+export async function isServerAvailable(timeoutMs = 2500) {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -120,6 +137,7 @@ export async function isServerAvailable(timeoutMs = 800) {
     // _fetchWithRetry) é pra depois de já saber que o backend existe.
     const res = await fetch(`${baseUrl}/health`, { signal: ctrl.signal });
     clearTimeout(t);
+    if (res.ok) { try { _serverInfo = await res.json(); } catch { _serverInfo = null; } }
     return res.ok;
   } catch {
     return false;
@@ -392,4 +410,24 @@ export const engineInfo = {
   supportsDb: true,
   supportsDiff: true,
   supportsKAnonymity: true,
+};
+
+
+// ── Estado em disco: preferências, rascunhos de receita e arquivos recentes ──
+// (ver server/datalock_studio/state.py — vive no disco, não depende de porta nem de navegador)
+async function _json(path, method, body) {
+  const res = await _fetchWithRetry(`${baseUrl}${path}`, {
+    method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Estado local indisponível (${res.status})`);
+  return res.json();
+}
+export const stateApi = {
+  getPrefs: () => _json("/state/prefs", "GET"),
+  putPrefs: (prefs) => _json("/state/prefs", "PUT", { prefs }),
+  getDrafts: () => _json("/state/drafts", "GET"),
+  putDraft: (name, steps) => _json("/state/drafts", "PUT", { name, steps }),
+  deleteDraft: (name) => _json("/state/drafts/delete", "POST", { name }),
+  addRecent: (name, rows) => _json("/state/recents", "POST", { name, rows }),
+  clearRecents: () => _json("/state/recents/clear", "POST", {}),
 };
