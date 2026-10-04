@@ -617,7 +617,7 @@ button.engine-badge.connect-btn:disabled .dot { animation: dl-pulse 1s ease-in-o
 /* ── Barra superior: em janelas estreitas só os ícones (o texto vira dica) ── */
 .topbar { flex-wrap: wrap; row-gap: 6px; }
 .topbar-actions { flex-wrap: wrap; }
-@media (max-width: 1240px) {
+@media (max-width: 1440px) {
   .topbar-actions .btn-label { display: none; }
   .topbar-actions .btn.ghost { padding: 6px 8px; }
 }

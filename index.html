@@ -123,11 +123,9 @@
       <span class="dot"></span>
       {{ connectingToServer ? 'Reconectando ao motor local…' : 'Motor local indisponível — tentar de novo' }}
     </button>
-    <button v-else class="engine-badge client connect-btn" :disabled="connectingToServer"
-            @click="requestConnect"
-            title="Com o datalock Studio aberto nesta máquina, clique para usar o motor completo. O navegador pode pedir permissão para acessar a rede local — é só a conexão com o programa na sua própria máquina (127.0.0.1). ">
-      <span class="dot"></span>
-      {{ connectingToServer ? 'Procurando o software completo…' : 'Prévia no navegador — conectar ao software completo' }}
+    <button v-else class="engine-badge client connect-btn" @click="showFullVersionInfo = true"
+            title="Esta é a prévia, que roda só no navegador. Clique para ver o que o software completo acrescenta.">
+      <span class="dot"></span> Prévia no navegador — conheça o software completo
     </button>
     <span v-if="serverConnectError" class="connect-error-note" role="alert">{{ serverConnectError }}</span>
     <span v-else-if="serverConnectNote" class="connect-note" role="status">{{ serverConnectNote }}</span>
@@ -462,21 +460,23 @@
     </div>
   </div>
 
-  <!-- ══════════════════ EXPLICAÇÃO ANTES DE CONECTAR (só na prévia hospedada) ══════════════════ -->
-  <div v-if="showConnectInfo" class="modal-backdrop" @click.self="showConnectInfo = false">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="connect-info-title">
-      <h2 id="connect-info-title"><span class="icon" v-html="icon('shield')"></span> Conectar ao software completo</h2>
-      <p>Para usar o motor completo, esta página precisa falar com o datalock Studio <strong>instalado no seu
-        computador</strong>. Ao continuar, o navegador vai mostrar um pedido como:</p>
-      <p class="connect-info-quote">“datalock-studio.tech está solicitando permissão para acessar outros apps e serviços neste dispositivo”</p>
+  <!-- ══════════════════ SOFTWARE COMPLETO (só na prévia hospedada) ══════════════════ -->
+  <div v-if="showFullVersionInfo" class="modal-backdrop" @click.self="showFullVersionInfo = false">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="full-version-title">
+      <h2 id="full-version-title"><span class="icon" v-html="icon('shield')"></span> Software completo</h2>
+      <p>Você está na <strong>prévia</strong>: tudo roda no seu navegador, com um motor em JavaScript. O
+        <strong>software completo</strong> para Windows tem a mesma interface, mas usa o motor Python da biblioteca
+        datalock, direto no seu computador:</p>
       <ul class="connect-info-list">
-        <li>É esperado: é só a conexão com o programa na sua própria máquina (<code>127.0.0.1</code>).</li>
-        <li>Nenhum dado seu sai do computador por causa dessa permissão.</li>
-        <li>Se você não instalou o programa, pode cancelar e continuar usando a prévia normalmente.</li>
+        <li>Arquivos muito maiores, sem o limite de memória do navegador.</li>
+        <li>Avaliação de privacidade completa, conexão com bancos de dados, varredura de pastas e automações agendadas.</li>
+        <li>Funciona 100% offline, e seus dados continuam só na sua máquina.</li>
       </ul>
+      <p class="muted" style="font-size: 12px;">Procure por <strong>datalock Studio</strong> na Microsoft Store (recomendado:
+        instalação assinada e atualizações automáticas) ou baixe o instalador direto.</p>
       <div class="modal-actions">
-        <button class="btn ghost" @click="showConnectInfo = false">Agora não</button>
-        <button class="btn primary" @click="confirmConnect">Continuar</button>
+        <button class="btn ghost" @click="showFullVersionInfo = false">Fechar</button>
+        <a v-if="fullVersionUrl" class="btn primary" :href="fullVersionUrl" target="_blank" rel="noopener noreferrer">Baixar</a>
       </div>
     </div>
   </div>

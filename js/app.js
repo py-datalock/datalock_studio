@@ -769,9 +769,9 @@ createApp({
     //    Acontece SOZINHA, e a tela de carregamento fica até o motor estar pronto —
     //    por isso nenhum arquivo pode ser aberto "cedo demais" no motor errado.
     //
-    // 2) Prévia hospedada (GitHub Pages): SEMPRE um clique da pessoa, precedido de uma explicação.
-    //    O pedido de permissão do navegador ("acessar outros apps e serviços neste dispositivo")
-    //    assusta quando aparece sozinho; por isso nada é tentado ao abrir a página.
+    // 2) Prévia hospedada (GitHub Pages): NÃO se conecta a nada local. Usa o motor em JavaScript e pronto.
+    //    (Já existiu um botão de "conectar ao software completo"; foi removido porque quem tem o programa
+    //    instalado já tem a interface completa nele — ver SECURITY.md/CHANGELOG.)
     const SERVED_BY_BACKEND = (() => {
       try {
         const { protocol, hostname, port } = window.location;
@@ -931,18 +931,10 @@ createApp({
     });
 
     const serverInfo = ref(null);   // { studio_version, datalock_version } do /health
-    const showConnectInfo = ref(false);
-
-    /** Clique no badge: na prévia hospedada explica o pedido de permissão ANTES de disparar a conexão. */
-    function requestConnect() {
-      if (engineMode.value === "server" || connectingToServer.value) return;
-      if (SERVED_BY_BACKEND) { connectToLocalSoftware(); return; }
-      showConnectInfo.value = true;
-    }
-    function confirmConnect() {
-      showConnectInfo.value = false;
-      connectToLocalSoftware();
-    }
+    // Prévia hospedada: sem conexão com nada local. O selo do topo só explica o que é o software completo.
+    // Preencha com o link de download (página de Releases ou da Store); vazio = o botão "Baixar" não aparece.
+    const fullVersionUrl = "";
+    const showFullVersionInfo = ref(false);
 
     async function connectToLocalSoftware() {
       if (engineMode.value === "server" || connectingToServer.value) return;
@@ -960,7 +952,7 @@ createApp({
         } else {
           serverConnectError.value = SERVED_BY_BACKEND
             ? "O motor local não respondeu. Feche e abra o programa de novo; se persistir, veja o arquivo de log em ~/.datalock_studio/desktop.log."
-            : "Não encontrei o software completo em http://127.0.0.1:8722. Confirme que o datalock Studio está aberto nesta máquina.";
+            : "O motor local não respondeu.";
         }
       } catch (err) {
         serverConnectError.value = `Falha ao tentar conectar: ${err.message}`;
@@ -991,9 +983,7 @@ createApp({
         if (!ok) serverConnectError.value =
           "O motor local não respondeu. Feche e abra o programa de novo; se persistir, veja ~/.datalock_studio/desktop.log.";
       }
-      // Prévia hospedada: NENHUMA chamada de rede para o computador da pessoa ao abrir a página.
-      // O navegador só pergunta sobre "acessar outros apps e serviços neste dispositivo" depois de um clique
-      // explícito em "conectar" — e antes do clique a gente explica o que vai aparecer (ver confirmConnect).
+      // Prévia hospedada: nenhuma chamada de rede para o computador da pessoa, nunca.
       document.getElementById("dl-boot-splash")?.remove();
     });
 
@@ -1197,7 +1187,8 @@ async function renderEdaCharts(edaResult) {
   for (const c of _edaChartInstances) c.destroy();
   _edaChartInstances = [];
   if (!edaResult) return;
-  const { default: Chart } = await import("https://cdn.jsdelivr.net/npm/chart.js@4/auto/+esm");
+  const Chart = window.Chart;   // empacotado em vendor/chart.umd.min.js — funciona offline e sob a CSP do programa
+  if (!Chart) throw new Error("A biblioteca de gráficos não carregou. Recarregue a página (Ctrl+F5).");
 
   edaResult.columns.forEach((col, idx) => {
     if (col.kind === "other") return;
@@ -1485,7 +1476,7 @@ async function toggleChart() {
     return {
       toasts, dismissToast, showShortcuts, shortcutList, exportNeutralize, openDataFolder,
       recentFiles, clearRecentFiles, restoreDraft, dismissDraft, formatDraftDate, serverInfo,
-      engineMode, engineBooting, servedByBackend, connectingToServer, serverConnectError, serverConnectNote, connectToLocalSoftware, requestConnect, confirmConnect, showConnectInfo,
+      engineMode, engineBooting, servedByBackend, connectingToServer, serverConnectError, serverConnectNote, connectToLocalSoftware, showFullVersionInfo, fullVersionUrl,
       tabs, activeTabId, activeTab,
       theme, toggleTheme, isDarkNow, icon,
       accentColorOptions: ACCENT_OPTIONS, accentColor, density, stepsPosition, showSettingsPanel,

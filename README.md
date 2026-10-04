@@ -1,139 +1,122 @@
-# datalock Studio — versão web
+# datalock Studio, Prévia web
 
-Interface no-code para limpar, transformar e anonimizar dados (compatível com a LGPD), sem escrever código.
-Esta pasta é o site: **https://datalock-studio.tech**
+**Já está publicada em https://datalock-studio.tech.** Esta pasta é o
+código fonte dela, caso queira publicar sua própria cópia.
 
-O datalock Studio existe em duas versões que compartilham a mesma interface:
+Site estático, sem build step, sem dependências de servidor. Publica no
+GitHub Pages em poucos passos.
 
-| | Prévia web (este site) | Software completo (Windows) |
-|---|---|---|
-| Onde roda | No seu navegador | No seu computador (Microsoft Store ou `.exe`) |
-| Instalação | Nenhuma | Sim |
-| Motor de dados | JavaScript (prévia) | Biblioteca `datalock` em Python |
-| Seus dados | Não saem do navegador | Não saem do computador |
-| Funciona offline | Parcialmente | Sim |
-| Arquivos grandes | Limitado pela memória do navegador | Muito mais folga |
+## Publicar no GitHub Pages
 
-A prévia serve para conhecer e para tarefas leves. Para uso sério, prefira o software completo.
+1. Crie um repositório no GitHub (pode ser este mesmo, o `datalock-studio`,
+   ou um novo só para o site).
+2. Coloque o conteúdo desta pasta (`web/`) na raiz do repositório — ou,
+   se preferir manter a estrutura do projeto inteiro (com `server/` junto),
+   configure o Pages para publicar a partir da pasta `/web` (ver passo 4).
+3. Faça commit e push:
+   ```bash
+   git add web/
+   git commit -m "Publica prévia web do datalock Studio"
+   git push
+   ```
+4. No GitHub: **Settings → Pages → Build and deployment → Source**:
+   escolha "Deploy from a branch", selecione a branch (ex.: `main`) e a
+   pasta (`/ (root)` se você colocou o conteúdo de `web/` na raiz, ou
+   `/web` se manteve a estrutura completa do repositório — o GitHub Pages
+   só permite `/ (root)` ou `/docs`, então se quiser publicar a partir de
+   `/web` sem mover arquivos, crie um workflow do GitHub Actions simples
+   (opção abaixo) ou copie/link a pasta `web/` para `docs/`).
+5. Aguarde alguns minutos — o link fica em
+   `https://SEU_USUARIO.github.io/SEU_REPOSITORIO/`.
 
-## O que dá para fazer
+### Alternativa simples: pasta `/docs`
 
-- Abrir CSV, XLSX, JSON, Parquet e `.dlk` (vários arquivos de uma vez; planilhas e tabelas viram abas).
-- Montar uma **receita** de passos: filtrar, ordenar, renomear, selecionar colunas, remover duplicados, preencher
-  nulos, criar colunas derivadas, dividir e juntar colunas, agrupar, entre outros.
-- **Detectar dados pessoais** (CPF, e-mail, telefone etc.) e **mascarar** com hash, redação, truncamento, supressão
-  ou cifra reversível.
-- Gerar **EDA automática**, **relatório de conformidade LGPD** (HTML, JSON e PDF) e comparar "o que mudou".
-- Salvar e reabrir receitas (`.json`) para repetir o mesmo tratamento em outros arquivos.
-- Exportar para CSV, Excel, JSON, Parquet e `.dlk` (com ou sem criptografia AES-256-GCM).
-- Dados sintéticos, avaliação rápida de k-anonimato e trilha de auditoria.
+Se preferir não mexer em Actions, o caminho mais direto é:
 
-Só no **software completo**: avaliação de privacidade completa, conexão com bancos de dados, varredura de pastas,
-automações agendadas e arquivos grandes.
-
-## Privacidade
-
-- Na prévia, os arquivos são lidos **no seu navegador** e não são enviados a nenhum servidor nosso.
-- O site não usa cookies de rastreamento nem ferramentas de análise.
-- Fontes e as principais bibliotecas (Vue, PapaParse, SheetJS, Chart.js) são servidas pelo próprio site.
-- Algumas funções carregam bibliotecas do jsDelivr **só quando você as usa**: Parquet, `.dlk`, SQLite no navegador e
-  PDF. Detalhes em [`privacy.html`](privacy.html).
-- O **salt** e as **chaves** que você digita ficam só na memória da aba e somem ao fechá-la.
-- Fechar a aba descarta o trabalho. Salve a receita antes (o site avisa se houver passos não salvos).
-
-## Conectar ao software completo (opcional)
-
-Se você tem o datalock Studio instalado, pode usar o motor completo a partir desta página:
-
-1. Abra o programa instalado.
-2. No site, clique no selo do topo ("Prévia no navegador — conectar ao software completo").
-3. Leia a explicação e clique em **Continuar**. O navegador vai perguntar se esta página pode "acessar outros apps
-   e serviços neste dispositivo". Isso é esperado: é só a conexão com o programa na sua própria máquina
-   (`127.0.0.1`). Nenhum dado sai do computador por causa dessa permissão.
-4. Libere esta página no programa, criando o arquivo `~/.datalock_studio/allowed_origins.txt`
-   (no Windows, `C:\Users\SEU_USUARIO\.datalock_studio\allowed_origins.txt`) com a linha:
-
-```
-   https://datalock-studio.tech
+```bash
+cp -r web docs
+git add docs
+git commit -m "Publica prévia via /docs"
+git push
 ```
 
-   Reinicie o programa depois de criar o arquivo.
+E no Pages, escolher a pasta `/docs` da branch principal.
 
-A página **não tenta** falar com o seu computador ao abrir: isso só acontece depois do seu clique. Se preferir não
-conectar, a prévia continua funcionando normalmente.
+## Rodar localmente (sem publicar)
 
-## Baixar o software completo
-
-- **Microsoft Store (recomendado):** instalação assinada e atualizações automáticas.
-- **Instalador direto (`.exe`):** disponível na página de [Releases](../../releases/latest) do repositório. Por não
-  ser assinado, o Windows SmartScreen pode exibir um aviso na primeira execução.
-
-## Atalhos de teclado
-
-| Atalho | Ação |
-|---|---|
-| `Ctrl O` | Abrir arquivo |
-| `Ctrl S` | Salvar a receita |
-| `Ctrl Z` / `Ctrl Y` | Desfazer / refazer |
-| `Ctrl F` | Buscar na tabela |
-| `Ctrl /` | Lista de atalhos |
-| `Esc` | Fechar o painel aberto |
-
-## Rodar localmente
-
-A página é estática (sem build). Qualquer servidor de arquivos serve:
+Não precisa de nenhum servidor — é possível abrir `index.html` direto no
+navegador com duplo clique. Alguns navegadores restringem `fetch()`/ES
+modules em arquivos abertos via `file://`; se a prévia não carregar assim,
+sirva a pasta com qualquer servidor estático simples:
 
 ```bash
 cd web
-python -m http.server 8000
-# abra http://localhost:8000
+python3 -m http.server 8080
+# abra http://localhost:8080
 ```
 
-Não abra o `index.html` com duplo clique (`file://`): os módulos JavaScript exigem `http://`.
+## Prévia × software completo
 
-## Estrutura
+A prévia hospedada **não se conecta a nada no seu computador**: tudo roda no navegador, com o motor em JavaScript.
+O software completo (Windows) é um programa separado que traz a **mesma interface** servida por ele mesmo, com o
+motor Python da biblioteca `datalock`. Quem o tem instalado não precisa abrir o site, e quem usa o site não precisa
+de nada instalado. No programa instalado a conexão da interface com o motor é automática.
 
-```
-web/
-├── index.html          interface (Vue 3, sem build step)
-├── privacy.html        política de privacidade
-├── css/
-│   ├── boot.css        estilo de inicialização (esconde o conteúdo cru e estiliza o carregamento)
-│   └── style.css       tema claro/escuro, densidade, cores
-├── js/
-│   ├── app.js          estado e lógica da interface
-│   ├── engine.js       escolhe o motor por tabela (prévia JS ou software completo)
-│   ├── engine-client.js / engine-server.js
-│   ├── file-io.js, dlk.js, pii-detect.js, risk-score.js, ...
-│   ├── a11y.js         foco, Esc e papéis ARIA nos diálogos
-│   └── boot.js         aviso se o carregamento demorar
-├── vendor/             Vue, PapaParse, SheetJS, Chart.js (sem CDN)
-├── fonts/              IBM Plex Sans e Mono
-├── DESIGN.md           decisões de design
-├── CNAME               domínio do site (não apagar)
-└── robots.txt, sitemap.xml, llms.txt
-```
+(Houve um botão para "conectar a prévia ao software completo". Foi removido: quem tem o programa já tem a interface
+completa nele, e esse botão exigia configuração manual, disparava um aviso de permissão do navegador e obrigava o
+programa a abrir uma exceção de segurança para o site.)
 
-## Publicação (GitHub Pages)
+## O que a prévia já faz sozinha, sem o software completo
 
-1. Publique o conteúdo desta pasta na raiz do repositório do site, **incluindo `vendor/` e `fonts/`**. Sem eles,
-   a página quebra.
-2. Mantenha o arquivo `CNAME`. Sem ele, o Pages derruba o domínio personalizado.
-3. Não versione binários grandes (`.exe`) aqui: o GitHub recusa arquivos acima de 100 MB. Use os Releases.
-4. Depois de publicar, abra o site com `Ctrl+F5` para ignorar o cache.
+Além das transformações básicas (filtrar, ordenar, agrupar, etc.), a
+prévia calcula 100% no navegador:
 
-## Limites conhecidos da prévia
+- Hash irreversível — byte-a-byte idêntico ao motor Python real
+- **Criptografia reversível e reversão (AES-SIV)** — MESMO formato do
+  software completo, testado byte-a-byte contra ele (ver `RECIPE_SCHEMA.md`)
+- Leitura e escrita de **`.dlk`** (aberto e criptografado) e de **Parquet**
+  — mesmo formato, só sem a compressão interna do software completo
+  (arquivo um pouco maior). `.dlk` multi-frame (aberto e cifrado): leitura,
+  escrita (exportar todas as abas juntas) e troca de chave, testados nos
+  dois sentidos contra a biblioteca Python.
+- Diff (o que mudou) e k-anonimato + **score composto de risco de reidentificação** (mesma fórmula da biblioteca, `web/js/risk-score.js`), com risco
+  médio de reidentificação e registros únicos calculados de forma exata
+- Relatório de conformidade em HTML, JSON e **PDF** (jsPDF, sob demanda)
+- Ferramentas `.dlk` (inspecionar metadados, trocar chave) para arquivos
+  de uma tabela só
+- **Varrer pasta**: escolha a pasta e os arquivos são lidos localmente
+  (`web/js/scan-files.js`)
+- **Trilha de auditoria** em memória, com download assinado por
+  HMAC-SHA256 (`web/js/audit-trail.js`)
+- **Banco de dados SQLite**: abrir `.sqlite`/`.db` (ou criar um novo), ler
+  tabelas/SQL como abas, enviar resultados (append/replace/upsert) e
+  baixar o arquivo de volta, via sql.js (`web/js/sqlite-db.js`)
+- **Dados sintéticos**: motores Rápido e Estatístico (cópula gaussiana,
+  `web/js/synthetic-copula.js`)
 
-- Arquivos muito grandes podem esgotar a memória do navegador.
-- Mascaramentos aleatórios (`mock_numeric`, `mock_category`) variam a cada execução na prévia e são determinísticos
-  no software completo.
-- Parquet gerado no navegador não é comprimido (o software completo usa zstd).
-- Algumas funções carregam bibliotecas externas sob demanda e, por isso, exigem internet.
+Continuam exclusivos do software completo: bancos em rede (PostgreSQL,
+MySQL...), automações de pasta/banco (precisam de um processo em segundo
+plano), a medida de utilidade estatística (que nem a interface do
+software completo expõe), o multi-frame com ACL (níveis de acesso por
+frame) e a compressão interna do `.dlk` — ver `RECIPE_SCHEMA.md` para o
+porquê de cada um.
 
-## Segurança
+## Dependências (via CDN, carregadas pelo `index.html`)
 
-Veja o arquivo `SECURITY.md` (referente a versão completa)
+- [Vue 3](https://vuejs.org/) (build global, sem necessidade de bundler)
+- [PapaParse](https://www.papaparse.com/) (leitura/escrita de CSV)
+- [SheetJS/xlsx](https://sheetjs.com/) (leitura/escrita de Excel)
 
-## Licença
+Carregadas sob demanda (só quando o recurso correspondente é usado, via
+`import()` dinâmico a partir do jsdelivr — sem bundler):
 
-Veja o arquivo `LICENSE` (referente a versão completa)
+- [hyparquet](https://github.com/hyparam/hyparquet) / [hyparquet-writer](https://github.com/hyparam/hyparquet-writer) (Parquet)
+- [apache-arrow](https://arrow.apache.org/docs/js/) (payload interno do `.dlk`, Arrow IPC)
+- [lz4js](https://github.com/Benzinga/lz4js) / [fzstd](https://github.com/101arrowz/fzstd) (compressão interna do `.dlk`/Arrow — só leitura)
+- [@noble/ciphers](https://github.com/paulmillr/noble-ciphers) (AES-SIV e ChaCha20-Poly1305, para `.dlk`/criptografia reversível)
+- [fflate](https://github.com/101arrowz/fflate) (abrir o `.zip` de um `.dlk` multi-frame)
+- [sql.js](https://github.com/sql-js/sql.js) (SQLite em WebAssembly — painel de banco de dados)
+- [jsPDF](https://github.com/parallax/jsPDF) (PDF do relatório de conformidade)
+
+Nenhuma dessas bibliotecas envia dados para fora — tudo roda no navegador
+de quem está usando a página.
